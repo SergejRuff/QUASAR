@@ -251,7 +251,7 @@ scaden_sim_pb <- function(
   if (verbose) {
     cat(sprintf("Simulating pseudobulks for Scaden ... (%d samples, %d cell types)\n",
                 samplenum, n_ct))
-    pb <- txtProgressBar(min = 0, max = n_steps, style = 3)
+    pb <- utils::txtProgressBar(min = 0, max = n_steps, style = 3)
   }
 
   # -- Step: Prepare reference ------------------------------------------------

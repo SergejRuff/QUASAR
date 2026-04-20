@@ -999,6 +999,8 @@ dissect_prop <- function(bulk = NULL,
                          device = c("auto", "cpu", "cuda"),
                          cuda_index = NULL) {
 
+  self <- NULL
+
   format_hms <- function(seconds) {
     seconds <- max(0, as.integer(round(seconds)))
     hh <- seconds %/% 3600
@@ -1458,6 +1460,8 @@ dissect_expr <- function(bulk = NULL,
     ss <- seconds %% 60
     sprintf("%02d:%02d:%02d", hh, mm, ss)
   }
+
+  self <- NULL
 
   make_bar <- function(i, n, width = 30L) {
     if (n <= 0) {
