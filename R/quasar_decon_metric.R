@@ -158,7 +158,7 @@
 #' }
 #' }
 #' with \eqn{M_i = \frac{1}{2}(P_i^* + Q_i^*)}.
-#'
+#' @importFrom stats sd rnorm cor
 #' @examples
 #' \dontrun{
 #' metrics <- quasar_prop_metrics(

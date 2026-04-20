@@ -81,7 +81,7 @@
 #' @importFrom SummarizedExperiment assay assayNames colData
 #' @importFrom Matrix Matrix sparseMatrix
 #' @importFrom MCMCpack rdirichlet
-#' @importFrom stats runif
+#' @importFrom stats runif setNames
 #'
 #' @examples
 #' \dontrun{
@@ -129,7 +129,7 @@ scaden_sim_pb <- function(
   tick <- function(msg, ...) {
     step <<- step + 1L
     if (verbose && !is.null(pb)) {
-      setTxtProgressBar(pb, step)
+      utils::setTxtProgressBar(pb, step)
       cat(sprintf("  [%s] %s\n", fmt_time(), sprintf(msg, ...)))
     }
   }
@@ -470,6 +470,7 @@ scaden_sim_pb <- function(
 #' \url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
 #' 
 #' @importFrom matrixStats rowMins rowMaxs colVars
+#' @importFrom stats setNames
 #'
 #' @examples
 #' \dontrun{

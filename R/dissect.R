@@ -227,7 +227,7 @@ dissect_aggregate_rows_by_name <- function(x, duplicated = "first") {
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
 #'
-#' @importFrom stats median
+#' @importFrom stats median rgamma rmultinom setNames
 #' @examples
 #' \dontrun{
 #' sim <- dissect_simulate(
@@ -1422,7 +1422,7 @@ dissect_prop <- function(bulk = NULL,
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
 #' 
-#' @importFrom stats quantile
+#' @importFrom stats setNames quantile
 #' @importFrom torch torch_tensor torch_float32 nn_module nn_linear nnf_relu torch_cat torch_randn_like torch_exp torch_mean optim_adam nn_mse_loss with_no_grad torch_manual_seed cuda_synchronize torch_device
 #' @examples
 #' \dontrun{

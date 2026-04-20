@@ -1,3 +1,228 @@
+#' Create reference matrix from single-cell data
+#'
+#' Creates a reference matrix for deconvolution by aggregating single-cell profiles
+#' by cell type. Works with either:
+#' 1. A SingleCellExperiment or Seurat object, or
+#' 2. Separate expression and metadata matrices
+#'
+#' @param ... Either:
+#'            - A single SingleCellExperiment or Seurat object, or
+#'            - Two matrices (expression data and metadata)
+#' @param ct_col string specifying the column name in metadata containing cell type information
+#' @param celltypes vector of cell types to include (NULL includes all)
+#' @param n_genes number of most variable genes to include (NULL uses all genes)
+#' @param seed random seed for reproducibility (default NULL)
+#' @param verbose logical, whether to print progress information (default TRUE)
+#'
+#' @return A list containing:
+#' \itemize{
+#'   \item ref_matrix: numeric matrix with genes in rows and cell types in columns
+#'   \item used_cells: named vector of cell barcodes used with cell types as names
+#'   \item used_genes: vector of genes included in the reference
+#' }
+#' @keywords internal
+#' @noRd
+quasar_create_ref <- function(...,
+                              ct_col,
+                              celltypes = NULL,
+                              patient_col = NULL,
+                              n_genes = NULL,
+                              seed = NULL,
+                              verbose = TRUE) {
+
+  start_time <- Sys.time()
+  if (verbose) {
+    cat("\033[34m", "-------------------------------", "\033[0m", "\n", sep = "")
+    cat("\033[34m", "\033[1m", "Creating Reference matrix", "\033[0m", "\n", sep = "")
+    cat("\033[34m", "-------------------------------", "\033[0m", "\n", sep = "")
+
+  }
+
+
+  args <- list(...)
+
+  if (!is.null(seed)) {
+    if (!is.numeric(seed)) stop("seed must be numeric or NULL")
+    set.seed(seed)
+    if (verbose) cat("\033[34m", "Random seed set to:",seed, "\033[0m", "\n", sep = "") 
+  }
+
+
+  if (length(args) == 1) {
+    # Single object case - SingleCellExperiment or Seurat
+    sc_obj <- args[[1]]
+    sc_data <- .extract_sc_data(sc_obj, ct_col)
+    expr.data <- sc_data$expr.data
+    pheno <- sc_data$pheno
+  } else if (length(args) == 2) {
+    # Two matrices case - expression and metadata
+    expr.data <- args[[1]]
+    meta.data <- args[[2]]
+
+    if (!(is.matrix(expr.data) || is.data.frame(expr.data) || inherits(expr.data, "dgCMatrix"))) {
+        stop("First argument should be expression data matrix or dgCMatrix sparse matrix")
+    }
+    if (!is.matrix(meta.data) && !is.data.frame(meta.data)) {
+      stop("Second argument should be metadata matrix/data.frame")
+    }
+    if(is.data.frame(meta.data)) meta.data <- as.matrix(meta.data)
+    expr.data <- as.matrix(expr.data)
+
+    if (!all(colnames(expr.data) == rownames(meta.data))) {
+      stop("Cell names in expression data and metadata don't match")
+    }
+
+
+    if (!ct_col %in% colnames(meta.data)) {
+      stop("ct_col not found in metadata")
+    }
+    pheno <- setNames(as.character(meta.data[, ct_col]), rownames(meta.data))
+  } else {
+    stop("Input must be either:\n",
+         "1. A SingleCellExperiment or Seurat object, or\n",
+         "2. Two matrices (expression data and metadata)")
+  }
+
+
+
+  .validate_ref_params(expr.data, n_genes)
+
+
+
+  if (!is.null(n_genes)) {
+    if (verbose) message("\nSelecting ", n_genes, " most variable genes...")
+    gene_vars <- matrixStats::rowVars(expr.data)
+    top_genes <- names(sort(gene_vars, decreasing = TRUE))[1:min(n_genes, nrow(expr.data))]
+    expr.data <- expr.data[top_genes, ]
+    if (verbose) message("Selected ", length(top_genes), " most variable genes")
+  } else {
+    top_genes <- rownames(expr.data)
+  }
+
+  all_celltypes <- unique(pheno)
+  if (is.null(celltypes)) {
+    ct_for_ref <- all_celltypes
+    unused_ct <- character(0)
+  } else {
+    ct_for_ref <- intersect(celltypes, all_celltypes)
+    unused_ct <- setdiff(celltypes, all_celltypes)
+  }
+
+  if (length(ct_for_ref) == 0) stop("No specified cell types found in the data")
+
+
+
+  if (!is.null(patient_col) && !patient_col %in% colnames(meta.data)) {
+    stop("patient_col not found in metadata.")
+  }
+
+  pheno_ct <- setNames(as.character(meta.data[, ct_col]), rownames(meta.data))
+  if (!is.null(patient_col)) {
+    pheno_pt <- setNames(as.character(meta.data[, patient_col]), rownames(meta.data))
+  } else {
+    pheno_pt <- setNames(rep("SINGLE_PAT", length(pheno_ct)), names(pheno_ct))
+  }
+
+  ct_list <- unique(pheno_ct)
+  mean_mat <- matrix(NA, nrow = nrow(expr.data), ncol = length(ct_list),
+                     dimnames = list(rownames(expr.data), ct_list))
+  sd_mat   <- mean_mat
+
+  for (ct in ct_list) {
+    cells_ct <- names(pheno_ct)[pheno_ct == ct]
+    patients_in_ct <- split(cells_ct, pheno_pt[cells_ct])
+
+    per_patient_means <- sapply(patients_in_ct, function(cells) {
+      if (length(cells) == 1) {
+        expr.data[, cells]
+      } else {
+        rowMeans(expr.data[, cells, drop = FALSE])
+      }
+    })
+
+    if (is.vector(per_patient_means)) {
+      per_patient_means <- matrix(per_patient_means, ncol = 1,
+                                  dimnames = list(rownames(expr.data),
+                                                  names(patients_in_ct)))
+    }
+
+    if (ncol(per_patient_means) == 1) {
+      mean_mat[, ct] <- per_patient_means[, 1]
+      sd_mat[, ct]   <- 0
+    } else {
+      mean_mat[, ct] <- rowMeans(per_patient_means)
+      sd_mat[, ct]   <- apply(per_patient_means, 1, sd)
+    }
+  }
+
+  if (verbose) {
+    end_time <- Sys.time()
+    time_taken <- round(difftime(end_time, start_time, units = "secs"), 2)
+    cat("\033[34m", "Reference matrix creation complete", "\033[0m", "\n", sep = "")
+    cat("\033[34m", "Time taken: ",time_taken," seconds", "\033[0m", "\n", sep = "")
+
+
+  }
+
+  return(list(ref_mean_matrix = mean_mat,
+              ref_sd_matrix   = sd_mat,
+              used_genes = rownames(mean_mat)))
+}
+
+#' @keywords internal
+.extract_sc_data <- function(sc_obj, ct_col) {
+  if (inherits(sc_obj, "SingleCellExperiment")) {
+    if (!requireNamespace("SingleCellExperiment", quietly = TRUE)) {
+      stop("SingleCellExperiment package required but not installed")
+    }
+    expr.data <- as.matrix(SingleCellExperiment::counts(sc_obj))
+    pheno <- sc_obj[[ct_col]]
+    if (is.null(pheno)) stop("ct_col not found in SingleCellExperiment metadata")
+    pheno <- setNames(as.character(pheno), colnames(sc_obj))
+
+  } else if (inherits(sc_obj, "Seurat")) {
+    if (!requireNamespace("Seurat", quietly = TRUE)) {
+      stop("Seurat package required but not installed")
+    }
+    expr.data <- as.matrix(sc_obj[["RNA"]]$counts)
+    pheno <- sc_obj[[ct_col]]
+    if (is.null(pheno)) stop("ct_col not found in Seurat metadata")
+    pheno <- setNames(as.character(pheno), colnames(sc_obj))
+
+  } else {
+    stop("Input must be either SingleCellExperiment or Seurat object")
+  }
+
+  return(list(expr.data = expr.data, pheno = pheno))
+}
+
+#' @keywords internal
+.validate_ref_params <- function(expr.data, n_genes) {
+
+
+
+  if (!is.null(n_genes)) {
+    if (!is.numeric(n_genes) || length(n_genes) != 1) {
+      stop("'n_genes' must be a single numeric value")
+    }
+    if (n_genes <= 0) {
+      stop("'n_genes' must be a positive integer")
+    }
+    if (n_genes > nrow(expr.data)) {
+      warning("Requested ", n_genes, " genes but only ", nrow(expr.data), " available")
+    }
+  }
+
+  if (!is.matrix(expr.data)) {
+    stop("Expression data is not in matrix format")
+  }
+
+  invisible(NULL)
+}
+
+
+
+
 #' Identify top differentially expressed genes per cell type
 #'
 #' Internal helper that performs one-versus-rest differential expression
@@ -50,7 +275,7 @@
 #' counts matrix before testing. If no significant marker genes remain for any
 #' cell type after filtering by `p.val.threshold`, the function stops with an
 #' error.
-#'
+#' @importFrom utils head
 #' @author Sergej Ruff
 #' @keywords internal
 #' @noRd

@@ -19,17 +19,12 @@ LazyData: true
 RoxygenNote: 7.3.3
 Imports: 
     coro,
-    dplyr,
-    ggplot2,
     Matrix,
     matrixStats,
     MCMCpack,
     methods,
-    NMF,
-    rlang,
     Seurat,
+    SeuratObject,
     SingleCellExperiment,
     SummarizedExperiment,
-    tibble,
-    tidyr,
     torch

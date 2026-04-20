@@ -44,6 +44,7 @@ tape_log <- function(msg, ..., start_time = NULL) {
 #' }
 #'
 #' @importFrom SummarizedExperiment assay colData
+#' @importFrom SeuratObject LayerData
 #' @keywords internal
 #' @noRd
 tape_extract_sc_data <- function(sc_data,
@@ -311,13 +312,13 @@ tape_simulate <- function(sc_data,
   tape_log("Sampling cells and building pseudobulks", start_time = sim_start)
 
   sample_mat <- matrix(0, nrow = samplenum, ncol = ncol(sc_counts))
-  pb <- txtProgressBar(min = 0, max = length(celltype_levels), style = 3)
+  pb <- utils::txtProgressBar(min = 0, max = length(celltype_levels), style = 3)
 
   for (j in seq_along(celltype_levels)) {
     idx_pool <- celltype_groups[[j]]
     counts_j <- as.integer(cell_num[, j])
     if (length(idx_pool) == 0 || sum(counts_j) == 0) {
-      setTxtProgressBar(pb, j)
+      utils::setTxtProgressBar(pb, j)
       next
     }
 
@@ -332,7 +333,7 @@ tape_simulate <- function(sc_data,
     )
     contrib <- Matrix::t(Matrix::t(sc_counts[idx_pool, , drop = FALSE]) %*% W)
     sample_mat <- sample_mat + as.matrix(contrib)
-    setTxtProgressBar(pb, j)
+    utils::setTxtProgressBar(pb, j)
   }
   close(pb)
 
@@ -400,7 +401,7 @@ tape_simulate <- function(sc_data,
 #' The current implementation applies scaling row-wise after `log1p`
 #' transformation, matching the intended sample-wise scaling direction.
 #'
-#' @importFrom stats var
+#' @importFrom stats var sd
 #' @examples
 #' \dontrun{
 #' processed <- tape_process(
@@ -973,7 +974,7 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
       TestPred <- matrix(0, nrow = n_samples, ncol = n_ct)
 
       tape_log("Start adaptive training at high-resolution", start_time = pred_start)
-      pb <- txtProgressBar(min = 0, max = n_samples, style = 3)
+      pb <- utils::txtProgressBar(min = 0, max = n_samples, style = 3)
 
       for (i in seq_len(n_samples)) {
         # Reload model weights by deep-copying
@@ -982,7 +983,7 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
         res <- tape_adaptive_stage(model_copy, x, step = 300L, max_iter = 3L)
         TestSigmList[i, , ] <- res$sigm
         TestPred[i, ] <- res$pred
-        setTxtProgressBar(pb, i)
+        utils::setTxtProgressBar(pb, i)
         if (i %% 10 == 0 || i == n_samples) {
           tape_log("High-resolution sample %d/%d finished", i, n_samples, start_time = pred_start)
         }
