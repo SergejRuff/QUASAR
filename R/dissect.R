@@ -1,5 +1,4 @@
-library(torch)
-library(Matrix)
+
 
 #' Extract single-cell counts and metadata
 #'
@@ -230,7 +229,7 @@ dissect_aggregate_rows_by_name <- function(x, duplicated = "first") {
 #'
 #' @importFrom stats median
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' sim <- dissect_simulate(
 #'   sc_data = sce,
 #'   celltype_col = "celltype",
@@ -651,7 +650,7 @@ dissect_simulate <- function(sc_data,
 #' \url{https://github.com/imsb-uke/DISSECT}
 #'
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' proc <- dissect_process(
 #'   bulk = bulk_mat,
 #'   sim_data = sim
@@ -965,7 +964,7 @@ dissect_resolve_device <- function(device = c("auto", "cpu", "cuda"),
 #'
 #' @importFrom torch torch_tensor torch_float32 nn_module nn_module_list nn_linear nn_dropout nnf_relu nnf_softmax torch_sigmoid torch_tanh torch_clamp optim_adam with_no_grad torch_mean torch_sum torch_log torch_abs torch_manual_seed  cuda_synchronize torch_device
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' prop <- dissect_prop(
 #'   processed = proc,
 #'   n_steps = 5000,
@@ -1996,7 +1995,7 @@ dissect_expr <- function(bulk = NULL,
 #' \url{https://github.com/imsb-uke/DISSECT}
 #'
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' res <- dissect(
 #'   sc_data = sce,
 #'   bulk = bulk_mat,

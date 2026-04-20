@@ -43,7 +43,7 @@ The current implementation applies scaling row-wise after `log1p`
 transformation, matching the intended sample-wise scaling direction.
 }
 \examples{
-\\dontrun{
+\dontrun{
 processed <- tape_process(
   simudata = simudata,
   real_bulk = bulk_mat

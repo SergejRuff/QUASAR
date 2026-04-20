@@ -29,7 +29,7 @@ This function implements the TAPE autoencoder training procedure described
 by Chen et al. (2022) in torch in R.
 }
 \examples{
-\\dontrun{
+\dontrun{
 model <- tape_train(
   train_x = processed$train_x,
   train_y = processed$train_y,

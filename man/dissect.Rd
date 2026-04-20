@@ -185,7 +185,7 @@ is trained after fraction estimation.
 Elapsed time for each major step and the total runtime are reported.
 }
 \examples{
-\\dontrun{
+\dontrun{
 res <- dissect(
   sc_data = sce,
   bulk = bulk_mat,

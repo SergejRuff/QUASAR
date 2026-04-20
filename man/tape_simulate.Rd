@@ -73,7 +73,7 @@ implementation of TAPE, following the simulation strategy used in the
 original TAPE workflow.
 }
 \examples{
-\\dontrun{
+\dontrun{
 simudata <- tape_simulate(
   sc_data = sce,
   samplenum = 5000,

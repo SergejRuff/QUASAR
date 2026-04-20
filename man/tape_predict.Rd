@@ -48,7 +48,7 @@ refinement as described by Chen et al. (2022), following the workflow used
 in the original PyTorch implementation.
 }
 \examples{
-\\dontrun{
+\dontrun{
 pred <- tape_predict(
   model = model,
   test_x = processed$test_x,

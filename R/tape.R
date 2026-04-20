@@ -1,7 +1,6 @@
 
 
-library(torch)
-library(Matrix)
+
 
 
 
@@ -199,7 +198,7 @@ tape_extract_sc_data <- function(sc_data,
 #' @importFrom MCMCpack rdirichlet
 #' @importFrom stats runif
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' simudata <- tape_simulate(
 #'   sc_data = sce,
 #'   samplenum = 5000,
@@ -403,7 +402,7 @@ tape_simulate <- function(sc_data,
 #'
 #' @importFrom stats var
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' processed <- tape_process(
 #'   simudata = simudata,
 #'   real_bulk = bulk_mat
@@ -718,7 +717,7 @@ tape_make_bar <- function(i, n, width = 30L) {
 #'
 #' @importFrom torch cuda_is_available torch_tensor optim_adam nnf_l1_loss
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' model <- tape_train(
 #'   train_x = processed$train_x,
 #'   train_y = processed$train_y,
@@ -948,7 +947,7 @@ tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L) {
 #'
 #' @importFrom torch cuda_is_available torch_tensor
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' pred <- tape_predict(
 #'   model = model,
 #'   test_x = processed$test_x,
@@ -1133,7 +1132,7 @@ tape_clone_model <- function(model) {
 #' }
 #'
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' res <- tape(
 #'   sc_data = sce,
 #'   real_bulk = bulk_mat,

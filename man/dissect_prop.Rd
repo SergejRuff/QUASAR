@@ -118,7 +118,7 @@ workflow for fraction estimation within an R interface.
 Progress bars and elapsed time are reported during training.
 }
 \examples{
-\\dontrun{
+\dontrun{
 prop <- dissect_prop(
   processed = proc,
   n_steps = 5000,

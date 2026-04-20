@@ -96,7 +96,7 @@ DISSECT implementation as closely as possible while using in-memory R data
 structures instead of file-based Python objects.
 }
 \examples{
-\\dontrun{
+\dontrun{
 sim <- dissect_simulate(
   sc_data = sce,
   celltype_col = "celltype",

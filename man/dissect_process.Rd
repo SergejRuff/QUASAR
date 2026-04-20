@@ -72,7 +72,7 @@ The intended DISSECT workflow uses `sim_data` generated from
 convenience interface for proportion estimation.
 }
 \examples{
-\\dontrun{
+\dontrun{
 proc <- dissect_process(
   bulk = bulk_mat,
   sim_data = sim

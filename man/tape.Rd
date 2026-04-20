@@ -85,7 +85,7 @@ The model architecture and workflow are implemented in torch in R following
 the PyTorch implementation provided in the original TAPE repository.
 }
 \examples{
-\\dontrun{
+\dontrun{
 res <- tape(
   sc_data = sce,
   real_bulk = bulk_mat,
