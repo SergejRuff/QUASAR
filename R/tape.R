@@ -789,7 +789,7 @@ tape_train <- function(train_x, train_y,
       tape_format_hms(elapsed),
       tape_format_hms(eta)
     ))
-    flush.console()
+    utils::flush.console()
   }
 
   cat("\n")
@@ -866,7 +866,7 @@ tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L) {
         tape_format_hms(elapsed),
         tape_format_hms(eta)
       ))
-      flush.console()
+      utils::flush.console()
     }
 
     for (i in seq_len(step)) {
@@ -892,7 +892,7 @@ tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L) {
         tape_format_hms(elapsed),
         tape_format_hms(eta)
       ))
-      flush.console()
+      utils::flush.console()
     }
   }
 

@@ -1297,7 +1297,7 @@ dissect_prop <- function(bulk = NULL,
         last_loss,
         format_hms(elapsed_model)
       ))
-      flush.console()
+      utils::flush.console()
     }
 
     if (backend$using_cuda) {
@@ -1790,7 +1790,7 @@ dissect_expr <- function(bulk = NULL,
           last_loss,
           format_hms(elapsed_expr)
         ))
-        flush.console()
+        utils::flush.console()
       }
     }
   }

@@ -887,7 +887,7 @@ scaden <- function(train_x,
         format_secs(elapsed),
         format_secs(eta)
       ))
-      flush.console()
+      utils::flush.console()
     }
 
     cat("\n")
