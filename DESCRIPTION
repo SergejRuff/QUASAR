@@ -1,0 +1,31 @@
+Package: QUASAR
+Type: Package
+Title: Cell deconvolution and uncertainty quantififcation via QUASAR
+Version: 0.1.0
+Authors@R: 
+    c(
+    person("Ruff", "Sergej", email = "serijnh@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0009-0000-8264-6347")),
+    person("Jung", "Klaus",email = "klaus.jung@tiho-hannover.de", role = "ctb",
+           comment = c(ORCID = "0000-0001-9955-748X")))
+Maintainer: Ruff Sergej <serijnh@gmail.com>  
+Description: QUASAR, a novel deep learning-based cell
+    deconvolution method with uncertainty quantification. The package
+    also includes implementations of state-of-the-art deconvolution
+    methods (scaden,tape,dissect) for benchmarking.
+License: GPL (>= 3)
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.3.3
+Imports: 
+    dplyr,
+    ggplot2,
+    Matrix,
+    methods,
+    NMF,
+    rlang,
+    Seurat,
+    SingleCellExperiment,
+    SummarizedExperiment,
+    tibble,
+    tidyr
