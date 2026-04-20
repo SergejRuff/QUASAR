@@ -256,7 +256,7 @@ scaden_sim_pb <- function(
 
   # -- Step: Prepare reference ------------------------------------------------
 
-  tick("Preparing reference — %d cells, %d genes, %d cell types",
+  tick("Preparing reference - %d cells, %d genes, %d cell types",
        ncol(counts), nrow(counts), n_ct)
 
   # -- Step: Generate Dirichlet proportions -----------------------------------
@@ -524,7 +524,7 @@ scaden_process <- function(sim_data,
     hit_cols <- if (!is.null(cn)) length(intersect(cn, target_genes)) else 0L
 
     if (hit_cols > hit_rows) return(mat)            # already samples x genes
-    if (hit_rows > hit_cols) return(t(mat))         # genes x samples → transpose
+    if (hit_rows > hit_cols) return(t(mat))         
 
     # Tie-break on dimension match
     if (!is.null(rn) && nrow(mat) == length(target_genes)) return(t(mat))
@@ -598,7 +598,7 @@ scaden_process <- function(sim_data,
     log_msg("Shared genes after filtering: %d", length(genes_keep))
 
     if (length(genes_keep) == 0L)
-      stop("No genes remain after intersection — check that training and bulk gene names match.")
+      stop("No genes remain after intersection - check that training and bulk gene names match.")
 
     test_x <- normalize(bulk_x[, genes_keep, drop = FALSE], normalize_test)
     log_msg("Normalised test data (%s): %d samples x %d genes",
