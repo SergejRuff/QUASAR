@@ -26,5 +26,6 @@ Imports:
     MCMCpack,
     methods,
     SeuratObject,
+    SingleCellExperiment,
     SummarizedExperiment,
     torch
