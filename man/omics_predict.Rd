@@ -11,7 +11,8 @@ omics_predict(
   samplename = NULL,
   batch_size = 128L,
   device = c("auto", "cpu", "cuda"),
-  cuda_index = NULL
+  cuda_index = NULL,
+  verbose = TRUE
 )
 }
 \arguments{
@@ -32,6 +33,9 @@ If `"auto"`, CUDA is used when available, otherwise CPU is used.}
 
 \item{cuda_index}{Optional integer scalar giving the CUDA device index to use
 when `device = "cuda"`. CUDA indices are zero-based.}
+
+\item{verbose}{Logical scalar. If `TRUE`, prints the selected prediction
+device.}
 }
 \value{
 A data frame with samples in rows and predicted cell-type proportions
