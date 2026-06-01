@@ -32,9 +32,6 @@ If `"auto"`, CUDA is used when available, otherwise CPU is used.}
 
 \item{cuda_index}{Optional integer scalar giving the CUDA device index to use
 when `device = "cuda"`. CUDA indices are zero-based.}
-
-\item{verbose}{Logical scalar. If `TRUE`, prints the selected prediction
-device.}
 }
 \value{
 A data frame with samples in rows and predicted cell-type proportions
