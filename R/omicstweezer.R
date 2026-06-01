@@ -717,8 +717,7 @@ omics_train <- function(train_x, train_y, test_x,
                         seed = 2021L,
                         verbose = TRUE) {
 
-  if (!requireNamespace("coro", quietly = TRUE))
-    stop("Package 'coro' is required (it ships with torch).")
+
 
   train_start <- Sys.time()
   ot_log("Training started (epochs = %d, batch = %d, lr = %.1e)",
