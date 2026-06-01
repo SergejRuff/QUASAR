@@ -823,11 +823,11 @@ omics_train <- function(train_x, train_y, test_x,
       ot_val    <- as.numeric(w_dist$item())
       total_val <- as.numeric(loss$item())
 
-      mse_loss_epoch         <<- mse_loss_epoch         + mse_val
-      ot_loss_epoch          <<- ot_loss_epoch          + ot_val
-      weighted_ot_loss_epoch <<- weighted_ot_loss_epoch + loss_weight * ot_val
-      total_loss_epoch       <<- total_loss_epoch       + total_val
-      n_batches              <<- n_batches              + 1L
+      mse_loss_epoch         <- mse_loss_epoch         + mse_val
+      ot_loss_epoch          <- ot_loss_epoch          + ot_val
+      weighted_ot_loss_epoch <- weighted_ot_loss_epoch + loss_weight * ot_val
+      total_loss_epoch       <- total_loss_epoch       + total_val
+      n_batches              <- n_batches              + 1L
     })
 
     n_batches_safe <- max(1L, n_batches)
