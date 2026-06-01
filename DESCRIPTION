@@ -12,7 +12,7 @@ Maintainer: Ruff Sergej <serijnh@gmail.com>
 Description: QUASAR, a novel deep learning-based cell
     deconvolution method with uncertainty quantification. The package
     also includes implementations of state-of-the-art deconvolution
-    methods (scaden,tape,dissect) for benchmarking.
+    methods (scaden,tape,dissect,tweezer) for benchmarking.
 License: GPL (>= 3) + file LICENSE
 URL: https://github.com/SergejRuff/QUASAR
 BugReports: https://github.com/SergejRuff/QUASAR/issues
