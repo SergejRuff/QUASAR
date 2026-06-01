@@ -703,7 +703,7 @@ omics_naive_w_distance <- function(emb_source, emb_target) {
 #' TAPE project PyTorch implementation:
 #' \url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
 #'
-#' @importFrom torch cuda_is_available optim_adam torch_tensor torch_float
+#' @importFrom torch cuda_is_available optim_adam torch_tensor torch_float tensor_dataset dataloader
 #' @importFrom utils flush.console
 #'
 #' @export
@@ -717,6 +717,9 @@ omics_train <- function(train_x, train_y, test_x,
                         seed = 2021L,
                         verbose = TRUE) {
 
+  if (!requireNamespace("coro", quietly = TRUE))
+    stop("Package 'coro' is required (it ships with torch).")
+
   train_start <- Sys.time()
   ot_log("Training started (epochs = %d, batch = %d, lr = %.1e)",
          epochs, batch_size, learning_rate, start_time = train_start)
@@ -728,13 +731,13 @@ omics_train <- function(train_x, train_y, test_x,
   model <- omics_create_model(feature_num, celltype_num, dims, drops)
 
   dev_info <- omics_resolve_device(
-    device = device,
+    device     = device,
     cuda_index = cuda_index,
-    verbose = verbose,
-    stage = "training"
+    verbose    = verbose,
+    stage      = "training"
   )
-
   dev <- dev_info$device
+
   model$encoder   <- model$encoder$to(device = dev)
   model$predictor <- model$predictor$to(device = dev)
 
@@ -743,47 +746,67 @@ omics_train <- function(train_x, train_y, test_x,
     lr = learning_rate
   )
 
-  n_src <- nrow(train_x); n_tgt <- nrow(test_x)
-  src_x_t <- torch::torch_tensor(train_x, dtype = torch::torch_float(), device = dev)
-  src_y_t <- torch::torch_tensor(train_y, dtype = torch::torch_float(), device = dev)
-  tgt_x_t <- torch::torch_tensor(test_x,  dtype = torch::torch_float(), device = dev)
+  # --- Build tensor datasets + dataloaders (matches Python TensorDataset/DataLoader) ----
+  # Keep tensors on CPU; move batches to device per-iteration (mirrors .cuda() pattern).
+  src_x_t <- torch::torch_tensor(train_x, dtype = torch::torch_float())
+  src_y_t <- torch::torch_tensor(train_y, dtype = torch::torch_float())
+  tgt_x_t <- torch::torch_tensor(test_x,  dtype = torch::torch_float())
+  # Python TensorDataset(te_data, te_labels) carries a y; we don't use it but
+  # keep the dataset shape symmetric so unpacking matches.
+  tgt_y_t <- torch::torch_tensor(
+    matrix(0, nrow = nrow(test_x), ncol = celltype_num),
+    dtype = torch::torch_float()
+  )
 
+  source_dataset <- torch::tensor_dataset(src_x_t, src_y_t)
+  target_dataset <- torch::tensor_dataset(tgt_x_t, tgt_y_t)
+
+  train_source_loader <- torch::dataloader(
+    source_dataset, batch_size = batch_size,
+    shuffle = TRUE, drop_last = FALSE
+  )
+  train_target_loader <- torch::dataloader(
+    target_dataset, batch_size = batch_size,
+    shuffle = TRUE, drop_last = FALSE
+  )
+
+  # ---------------------------------------------------------------------------------
   model$encoder$train(); model$predictor$train()
   history <- data.frame(
-    epoch = seq_len(epochs),
-    total_loss = NA_real_,
-    mse_loss = NA_real_,
-    ot_loss = NA_real_,
+    epoch            = seq_len(epochs),
+    total_loss       = NA_real_,
+    mse_loss         = NA_real_,
+    ot_loss          = NA_real_,
     weighted_ot_loss = NA_real_
   )
   model_name <- sprintf("OmicsTweezer[d=%d]", dims[1])
 
   for (ep in seq_len(epochs)) {
-    src_perm <- sample.int(n_src)
-    tgt_perm <- sample.int(n_tgt)
-    tgt_cursor <- 1L
-    total_loss_epoch <- 0
-    mse_loss_epoch <- 0
-    ot_loss_epoch <- 0
+    total_loss_epoch       <- 0
+    mse_loss_epoch         <- 0
+    ot_loss_epoch          <- 0
     weighted_ot_loss_epoch <- 0
-    n_batches <- 0L
+    n_batches              <- 0L
 
-    for (start in seq(1L, n_src, by = batch_size)) {
-      end <- min(start + batch_size - 1L, n_src)
-      src_idx <- src_perm[start:end]
+    # train_target_iterator = iter(self.train_target_loader)
+    target_iter <- torch::dataloader_make_iter(train_target_loader)
 
-      # cycle target iterator (matches the try/StopIteration pattern)
-      bs <- length(src_idx)
-      if (tgt_cursor + bs - 1L > n_tgt) {
-        tgt_perm   <- sample.int(n_tgt)
-        tgt_cursor <- 1L
+    # for batch_idx, (source_x, source_y) in enumerate(self.train_source_loader):
+    coro::loop(for (src_batch in train_source_loader) {
+
+      src_x <- src_batch[[1]]$to(device = dev)
+      src_y <- src_batch[[2]]$to(device = dev)
+
+      # try:           target_x, _ = next(train_target_iterator)
+      # except StopIteration:
+      #     train_target_iterator = iter(self.train_target_loader)
+      #     target_x, _ = next(train_target_iterator)
+      tgt_batch <- torch::dataloader_next(target_iter)
+      if (is.null(tgt_batch)) {
+        target_iter <- torch::dataloader_make_iter(train_target_loader)
+        tgt_batch   <- torch::dataloader_next(target_iter)
       }
-      tgt_idx    <- tgt_perm[tgt_cursor:(tgt_cursor + bs - 1L)]
-      tgt_cursor <- tgt_cursor + bs
-
-      src_x <- src_x_t[src_idx, , drop = FALSE]
-      src_y <- src_y_t[src_idx, , drop = FALSE]
-      tgt_x <- tgt_x_t[tgt_idx, , drop = FALSE]
+      tgt_x <- tgt_batch[[1]]$to(device = dev)
 
       emb_src   <- model$encoder(src_x)
       emb_tgt   <- model$encoder(tgt_x)
@@ -794,26 +817,24 @@ omics_train <- function(train_x, train_y, test_x,
       loss      <- pred_loss + loss_weight * w_dist
 
       optimizer$zero_grad()
-      loss$backward(retain_graph = TRUE)        # kept 1:1 with original
+      loss$backward(retain_graph = TRUE)
       optimizer$step()
 
-      mse_val <- as.numeric(pred_loss$item())
-      ot_val  <- as.numeric(w_dist$item())
+      mse_val   <- as.numeric(pred_loss$item())
+      ot_val    <- as.numeric(w_dist$item())
       total_val <- as.numeric(loss$item())
 
-      mse_loss_epoch <- mse_loss_epoch + mse_val
-      ot_loss_epoch <- ot_loss_epoch + ot_val
-      weighted_ot_loss_epoch <- weighted_ot_loss_epoch + loss_weight * ot_val
-      total_loss_epoch <- total_loss_epoch + total_val
-
-      n_batches <- n_batches + 1L
-    }
+      mse_loss_epoch         <<- mse_loss_epoch         + mse_val
+      ot_loss_epoch          <<- ot_loss_epoch          + ot_val
+      weighted_ot_loss_epoch <<- weighted_ot_loss_epoch + loss_weight * ot_val
+      total_loss_epoch       <<- total_loss_epoch       + total_val
+      n_batches              <<- n_batches              + 1L
+    })
 
     n_batches_safe <- max(1L, n_batches)
-
-    history$total_loss[ep] <- total_loss_epoch / n_batches_safe
-    history$mse_loss[ep] <- mse_loss_epoch / n_batches_safe
-    history$ot_loss[ep] <- ot_loss_epoch / n_batches_safe
+    history$total_loss[ep]       <- total_loss_epoch       / n_batches_safe
+    history$mse_loss[ep]         <- mse_loss_epoch         / n_batches_safe
+    history$ot_loss[ep]          <- ot_loss_epoch          / n_batches_safe
     history$weighted_ot_loss[ep] <- weighted_ot_loss_epoch / n_batches_safe
 
     if (verbose) {
@@ -835,12 +856,11 @@ omics_train <- function(train_x, train_y, test_x,
   ot_log("Training finished", start_time = train_start)
 
   list(
-    encoder = model$encoder,
+    encoder   = model$encoder,
     predictor = model$predictor,
-    history = history
+    history   = history
   )
 }
-
 
 
 
