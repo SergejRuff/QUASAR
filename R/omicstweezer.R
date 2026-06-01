@@ -523,18 +523,23 @@ omics_process <- function(simudata, real_bulk,
 
   ot_log("Scaling (%s, per sample)", scaler, start_time = proc_start)
   if (scaler == "ss") {
+    pop_sd <- function(M) {
+      # row-wise population std (matches sklearn StandardScaler / numpy default)
+      mu <- rowMeans(M)
+      sqrt(rowMeans((M - mu)^2))
+    }
+
     train_mean <- rowMeans(train_x)
-    train_sd   <- apply(train_x, 1, sd)
+    train_sd   <- pop_sd(train_x)
     sd_safe    <- ifelse(train_sd == 0, 1, train_sd)
     train_x    <- sweep(sweep(train_x, 1, train_mean, "-"), 1, sd_safe, "/")
     train_x[train_sd == 0, ] <- 0
 
     test_mean <- rowMeans(test_x)
-    test_sd   <- apply(test_x, 1, sd)
+    test_sd   <- pop_sd(test_x)
     sd_safe   <- ifelse(test_sd == 0, 1, test_sd)
     test_x    <- sweep(sweep(test_x, 1, test_mean, "-"), 1, sd_safe, "/")
     test_x[test_sd == 0, ] <- 0
-
   } else if (scaler == "mms") {
     train_min <- apply(train_x, 1, min)
     train_max <- apply(train_x, 1, max)
