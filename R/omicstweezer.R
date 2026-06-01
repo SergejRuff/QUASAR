@@ -860,6 +860,8 @@ omics_train <- function(train_x, train_y, test_x,
 #'   If `"auto"`, CUDA is used when available, otherwise CPU is used.
 #' @param cuda_index Optional integer scalar giving the CUDA device index to use
 #'   when `device = "cuda"`. CUDA indices are zero-based.
+#' @param verbose Logical scalar. If `TRUE`, prints the selected prediction
+#'   device.
 #'
 #' @return A data frame with samples in rows and predicted cell-type proportions
 #' in columns.
@@ -874,7 +876,7 @@ omics_train <- function(train_x, train_y, test_x,
 #' @export
 omics_predict <- function(model, test_x, celltypes, samplename = NULL,
                           batch_size = 128L,device = c("auto", "cpu", "cuda"),
-                          cuda_index = NULL) {
+                          cuda_index = NULL,verbose=TRUE) {
 
   # dev <- if (torch::cuda_is_available()) "cuda" else "cpu"
   # model$encoder$eval(); model$predictor$eval()
@@ -1099,7 +1101,7 @@ cuda_index     = NULL) {
     pred <- omics_predict(m, processed$test_x,
                           celltypes  = processed$celltypes,
                           samplename = processed$samplename,
-                          batch_size = batch_size,device     = device,
+                          batch_size = batch_size,device     = device,verbose = verbose,
   cuda_index = cuda_index)
     per_model[[nm]] <- pred
     models[[nm]]    <- m
