@@ -7,7 +7,6 @@
 omics_tweezer(
   sc_data,
   real_bulk,
-  real_bulk_obs = NULL,
   ot_weight = 1,
   scale_minmax = FALSE,
   samplenum = 5000L,
@@ -34,10 +33,6 @@ omics_tweezer(
 
 \item{real_bulk}{Numeric matrix or `data.frame` with genes in rows and real
 bulk samples in columns.}
-
-\item{real_bulk_obs}{Optional matrix or `data.frame` with ground-truth
-cell-type proportions for real bulk samples. Used only for reporting in the
-returned object.}
 
 \item{ot_weight}{Numeric scalar. Weight applied to the Wasserstein-style
 domain adaptation loss.}
@@ -87,9 +82,7 @@ when `device = "cuda"`. CUDA indices are zero-based.}
 \value{
 A named list with components:
 \describe{
-  \item{pred}{Data frame of averaged predicted cell-type proportions. If
-  `real_bulk_obs` is supplied, this component is itself a list containing
-  `pred` and `ground_truth`.}
+  \item{pred}{Data frame of averaged predicted cell-type proportions.}
   \item{per_model}{Named list of predictions from the `m256`, `m512`, and
   `m1024` architectures.}
   \item{simudata}{Simulated pseudobulk data returned by [omics_simulate()].}

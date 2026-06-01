@@ -928,9 +928,6 @@ omics_predict <- function(model, test_x, celltypes, samplename = NULL,
 #'   `data.frame`.
 #' @param real_bulk Numeric matrix or `data.frame` with genes in rows and real
 #'   bulk samples in columns.
-#' @param real_bulk_obs Optional matrix or `data.frame` with ground-truth
-#'   cell-type proportions for real bulk samples. Used only for reporting in the
-#'   returned object.
 #' @param ot_weight Numeric scalar. Weight applied to the Wasserstein-style
 #'   domain adaptation loss.
 #' @param scale_minmax Logical scalar. If `TRUE`, applies an outer global
@@ -962,9 +959,7 @@ omics_predict <- function(model, test_x, celltypes, samplename = NULL,
 #'
 #' @return A named list with components:
 #' \describe{
-#'   \item{pred}{Data frame of averaged predicted cell-type proportions. If
-#'   `real_bulk_obs` is supplied, this component is itself a list containing
-#'   `pred` and `ground_truth`.}
+#'   \item{pred}{Data frame of averaged predicted cell-type proportions.}
 #'   \item{per_model}{Named list of predictions from the `m256`, `m512`, and
 #'   `m1024` architectures.}
 #'   \item{simudata}{Simulated pseudobulk data returned by [omics_simulate()].}
@@ -983,7 +978,6 @@ omics_predict <- function(model, test_x, celltypes, samplename = NULL,
 #' @export
 omics_tweezer <- function(sc_data,
                           real_bulk,
-                          real_bulk_obs = NULL,
                           ot_weight      = 1.0,
                           scale_minmax   = FALSE,        
                           samplenum      = 5000L,
@@ -1120,9 +1114,7 @@ cuda_index     = NULL) {
   rownames(avg) <- processed$samplename
   colnames(avg) <- processed$celltypes
 
-  if (!is.null(real_bulk_obs))
-    avg <- list(pred = avg,
-                ground_truth = as.matrix(real_bulk_obs)[rownames(avg), , drop = FALSE])
+
 
   ot_log("Workflow finished | total %s",
          ot_format_hms(as.numeric(difftime(Sys.time(), total_start, units = "secs"))),
