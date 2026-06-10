@@ -127,11 +127,3 @@ sim <- scaden_sim_pb(
 }
 
 }
-\references{
-Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber, K.,
-Heutink, P., & Bonn, S. (2020). Deep learning-based cell composition analysis
-from tissue expression profiles. \emph{Science Advances}, 6(30), eaba2619.
-
-TAPE project PyTorch implementation:
-\url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
-}

@@ -68,20 +68,12 @@
 #' The output is structured to plug directly into [scaden_process()] and
 #' [scaden()]. In particular, `train_x` is returned as a samples x genes matrix
 #' and `train_y` as a samples x cell-types matrix.
-#' 
-#' @references
-#' Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber, K.,
-#' Heutink, P., & Bonn, S. (2020). Deep learning-based cell composition analysis
-#' from tissue expression profiles. \emph{Science Advances}, 6(30), eaba2619.
-#'
-#' TAPE project PyTorch implementation:
-#' \url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
 #'
 #' @importFrom methods slot slotNames
 #' @importFrom SummarizedExperiment assay assayNames colData
 #' @importFrom Matrix Matrix sparseMatrix
 #' @importFrom MCMCpack rdirichlet
-#' @importFrom stats runif setNames
+#' @importFrom stats runif
 #'
 #' @examples
 #' \dontrun{
@@ -115,68 +107,74 @@ scaden_sim_pb <- function(
   select_ct = NULL,
   verbose = TRUE
 ) {
+ 
 
-  # -- Local helpers ----------------------------------------------------------
-
+ 
+  start_time <- Sys.time()
+ 
   fmt_time <- function() {
     secs <- max(0L, as.integer(round(difftime(Sys.time(), start_time, units = "secs"))))
     sprintf("%02d:%02d:%02d", secs %/% 3600L, (secs %% 3600L) %/% 60L, secs %% 60L)
   }
+ 
 
-  step <- 0L
-  pb   <- NULL
-
-  tick <- function(msg, ...) {
-    step <<- step + 1L
-    if (verbose && !is.null(pb)) {
-      utils::setTxtProgressBar(pb, step)
-      cat(sprintf("  [%s] %s\n", fmt_time(), sprintf(msg, ...)))
-    }
+  draw_progress <- function(done, total, width = 32L) {
+    frac  <- if (total > 0L) min(1, done / total) else 1
+    nfill <- as.integer(round(frac * width))
+    cat(sprintf("\r  |%s%s| %3d%%  %d/%d  %s",
+                strrep("\u2588", nfill),
+                strrep("\u2591", width - nfill),
+                as.integer(round(100 * frac)),
+                done, total, fmt_time()))
+    utils::flush.console()
   }
-
+ 
   require_celltype_col <- function(meta) {
     if (is.null(celltype_col) || !nzchar(celltype_col))
       stop("`celltype_col` must be provided explicitly.")
     if (!celltype_col %in% colnames(meta))
       stop(sprintf("`celltype_col` '%s' not found in metadata.", celltype_col))
   }
-
-  # -- Setup ------------------------------------------------------------------
-
-  start_time <- Sys.time()
+ 
 
   if (!is.null(seed)) {
     stopifnot("`seed` must be a single finite number" = length(seed) == 1L && is.finite(seed))
     set.seed(as.integer(seed))
   }
-
-  # -- Extract counts matrix (genes x cells) and cell-type vector -------------
+ 
+  # Print immediately so the user sees activity during reference extraction.
+  if (verbose) cat("Simulating pseudobulks for Scaden ...\n")
+ 
 
   if (inherits(sc_data, "Seurat")) {
     stopifnot("Seurat object missing requested assay" = assay %in% names(sc_data@assays))
     assay_obj <- sc_data[[assay]]
-    stopifnot("Slot not found in assay" = slot %in% methods::slotNames(assay_obj))
-    counts <- as.matrix(methods::slot(assay_obj, slot))
+    avail <- if (inherits(assay_obj, "Assay5"))
+               SeuratObject::Layers(assay_obj)
+             else
+               methods::slotNames(assay_obj)
+    stopifnot("Slot/layer not found in assay" = slot %in% avail)
+    counts <- SeuratObject::GetAssayData(sc_data, assay = assay, layer = slot)
     meta   <- sc_data@meta.data
     require_celltype_col(meta)
     cell_types <- as.character(meta[[celltype_col]])
-
+ 
   } else if (inherits(sc_data, "SingleCellExperiment")) {
     avail <- SummarizedExperiment::assayNames(sc_data)
     stopifnot("Assay not found in SCE object" = slot %in% avail)
-    counts <- as.matrix(SummarizedExperiment::assay(sc_data, slot))
+    counts <- SummarizedExperiment::assay(sc_data, slot)
     meta   <- as.data.frame(SummarizedExperiment::colData(sc_data))
     require_celltype_col(meta)
     cell_types <- as.character(meta[[celltype_col]])
-
+ 
   } else if (is.matrix(sc_data) || is.data.frame(sc_data) || inherits(sc_data, "Matrix")) {
-    x <- as.matrix(sc_data)
-
+    x <- if (is.data.frame(sc_data)) as.matrix(sc_data) else sc_data
+ 
     if (!is.null(metadata)) {
       metadata <- as.data.frame(metadata)
       require_celltype_col(metadata)
       ct_vec <- as.character(metadata[[celltype_col]])
-
+ 
       if (ncol(x) == nrow(metadata)) {
         counts <- x
       } else if (nrow(x) == nrow(metadata)) {
@@ -185,7 +183,7 @@ scaden_sim_pb <- function(
         stop("Dimensions of `sc_data` and `metadata` do not match.")
       }
       cell_types <- ct_vec
-
+ 
     } else if (!is.null(celltypes)) {
       if (length(celltypes) == ncol(x)) {
         counts <- x
@@ -195,45 +193,44 @@ scaden_sim_pb <- function(
         stop("Length of `celltypes` does not match rows or columns of `sc_data`.")
       }
       cell_types <- as.character(celltypes)
-
+ 
     } else {
       stop("For matrix input, provide either `metadata` + `celltype_col` or `celltypes`.")
     }
-
+ 
   } else {
     stop("Unsupported `sc_data` type. Expected Seurat, SingleCellExperiment, matrix, data.frame, or Matrix.")
   }
+ 
 
-  # Ensure sparse storage, default row/col names, sanitise cell types
-  counts <- Matrix::Matrix(counts, sparse = TRUE)
+  counts <- methods::as(counts, "CsparseMatrix")
   if (is.null(rownames(counts))) rownames(counts) <- paste0("gene_", seq_len(nrow(counts)))
   if (is.null(colnames(counts))) colnames(counts) <- paste0("cell_", seq_len(ncol(counts)))
   cell_types <- gsub("/", "_", cell_types)
   stopifnot("Cell-type vector length != number of cells" = length(cell_types) == ncol(counts))
-
+ 
   # -- Apply unknown / select filters ----------------------------------------
-
+ 
   if (length(unknown_celltypes) > 0L)
     cell_types[cell_types %in% unknown_celltypes] <- unknown_label
-
+ 
   if (!is.null(select_ct)) {
     keep <- cell_types %in% select_ct
     if (!any(keep)) stop("No cells found for `select_ct`.")
     counts     <- counts[, keep, drop = FALSE]
     cell_types <- cell_types[keep]
   }
-
+ 
   ct_levels  <- sort(unique(cell_types))
   n_ct       <- length(ct_levels)
   if (n_ct < 1L) stop("No cell types available after filtering.")
-
-  # -- Validate numeric parameters --------------------------------------------
+ 
 
   stopifnot("`n` must be a positive number"         = is.numeric(n)         && length(n) == 1L         && n > 0,
             "`samplenum` must be a positive number"  = is.numeric(samplenum) && length(samplenum) == 1L && samplenum > 0)
   n         <- as.integer(n)
   samplenum <- as.integer(samplenum)
-
+ 
   if (is.null(d_prior)) {
     d_prior <- rep(1, n_ct)
   } else {
@@ -242,31 +239,18 @@ scaden_sim_pb <- function(
   }
   if (sparse) stopifnot("`sparse_prob` must be in [0, 1)" = sparse_prob >= 0 && sparse_prob < 1)
   if (rare)   stopifnot("`rare_percentage` must be in [0, 1]" = rare_percentage >= 0 && rare_percentage <= 1)
-
-  # -- Initialise progress bar ------------------------------------------------
-  # Fixed steps: prepare | dirichlet | cell counts | sample | build + done
-  # Conditional steps: +1 if sparse, +1 if rare
-  n_steps <- 5L + as.integer(sparse) + as.integer(rare)
-
-  if (verbose) {
-    cat(sprintf("Simulating pseudobulks for Scaden ... (%d samples, %d cell types)\n",
-                samplenum, n_ct))
-    pb <- utils::txtProgressBar(min = 0, max = n_steps, style = 3)
-  }
-
-  # -- Step: Prepare reference ------------------------------------------------
-
-  tick("Preparing reference - %d cells, %d genes, %d cell types",
-       ncol(counts), nrow(counts), n_ct)
-
-  # -- Step: Generate Dirichlet proportions -----------------------------------
-
+ 
+  if (verbose)
+    cat(sprintf("  Reference: %d cells | %d genes | %d cell types | %d pseudobulks\n",
+                ncol(counts), nrow(counts), n_ct, samplenum))
+ 
+  
+ 
   prop <- MCMCpack::rdirichlet(samplenum, d_prior)
   prop <- prop / rowSums(prop)
-  tick("Generated Dirichlet fractions")
-
-  # -- Step (conditional): Sparse perturbation --------------------------------
-
+ 
+ 
+ 
   if (sparse) {
     n_sparse <- as.integer(samplenum * sparse_prob)
     n_zero   <- min(as.integer(n_ct * sparse_prob), n_ct - 1L)
@@ -277,11 +261,10 @@ scaden_sim_pb <- function(
       rs <- rowSums(prop); rs[rs == 0] <- 1
       prop <- prop / rs
     }
-    tick("Applied sparse perturbation (prob = %.3f)", sparse_prob)
   }
-
-  # -- Step (conditional): Rare-cell perturbation -----------------------------
-
+ 
+ 
+ 
   if (rare) {
     n_rare_ct <- as.integer(n_ct * rare_percentage)
     if (n_rare_ct > 0L) {
@@ -298,32 +281,30 @@ scaden_sim_pb <- function(
         prop[i, rare_idx] <- buf
       }
     }
-    tick("Applied rare-cell perturbation (pct = %.3f)", rare_percentage)
   }
-
-  # -- Step: Convert proportions to integer cell counts -----------------------
-
+ 
+  
+ 
   cell_num <- matrix(as.integer(floor(n * prop)),
                      nrow = samplenum, ncol = n_ct,
                      dimnames = list(NULL, ct_levels))
-
+ 
   # Guarantee at least one cell per sample
   empty <- rowSums(cell_num) == 0L
   if (any(empty)) {
     best_col <- max.col(prop[empty, , drop = FALSE], ties.method = "first")
     for (ii in seq_along(best_col)) cell_num[which(empty)[ii], best_col[ii]] <- 1L
   }
-
+ 
   prop_realized <- cell_num / rowSums(cell_num)
-  tick("Computed cell counts per sample")
+ 
 
-  # -- Step: Sample cells -----------------------------------------------------
-
+ 
   ct_indices <- split(seq_along(cell_types), cell_types)[ct_levels]
-
+ 
   ids_all <- vector("list", n_ct)
   grp_all <- vector("list", n_ct)
-
+ 
   for (k in seq_along(ct_levels)) {
     total_k <- sum(cell_num[, k])
     if (total_k > 0L && length(ct_indices[[k]]) > 0L) {
@@ -331,39 +312,62 @@ scaden_sim_pb <- function(
       grp_all[[k]] <- rep.int(seq_len(samplenum), times = cell_num[, k])
     }
   }
-
-  tick("Sampled cells for %d cell types", n_ct)
-
-  # -- Step: Build pseudobulks ------------------------------------------------
-
+ 
   ids <- unlist(ids_all, use.names = FALSE)
   grp <- unlist(grp_all, use.names = FALSE)
+ 
 
-  S    <- Matrix::sparseMatrix(i = ids, j = grp, x = 1,
-                               dims = c(ncol(counts), samplenum))
-  bulk <- as.matrix(counts %*% S)
-
+  S <- Matrix::sparseMatrix(i = ids, j = grp, x = 1,
+                            dims = c(ncol(counts), samplenum))
+ 
+  # -- Build pseudobulks in sample blocks (this is the real work) -------------
+ 
+  gene_names   <- rownames(counts)
   sample_names <- paste0("sample_", seq_len(samplenum))
-  colnames(bulk) <- sample_names
+ 
+  # Pre-allocate the final samples x genes matrix and fill it directly,
+  # avoiding a full dense `bulk` plus its transpose (lower peak memory).
+  train_x <- matrix(0, nrow = samplenum, ncol = nrow(counts),
+                    dimnames = list(sample_names, gene_names))
+ 
+  block_size <- max(1L, ceiling(samplenum / 100L))   
+  starts     <- seq.int(1L, samplenum, by = block_size)
+ 
+  if (verbose) {
+    cat("  Generating pseudobulks:\n")
+    draw_progress(0L, samplenum)
+  }
+ 
+  for (s0 in starts) {
+    cols  <- s0:min(s0 + block_size - 1L, samplenum)
+    # Small dense block (genes x |cols|); never a large sparse->dense coercion.
+    block <- as.matrix(counts %*% S[, cols, drop = FALSE])
+    train_x[cols, ] <- t(block)
+    if (verbose) draw_progress(cols[length(cols)], samplenum)
+  }
+ 
+  if (verbose) cat("\n")
+ 
 
-  train_x <- t(bulk)                               # samples x genes
+ 
   train_y <- prop_realized                          # samples x cell types
-  rownames(train_x) <- rownames(train_y) <- sample_names
+  rownames(train_y) <- sample_names
   colnames(train_y) <- ct_levels
+ 
+  elapsed <- fmt_time()
+  if (verbose)
+    cat(sprintf("  Done in %s  (%d pseudobulks, %d cell types)\n",
+                elapsed, samplenum, n_ct))
+ 
 
-  tick("Simulation finished")
-
-  if (verbose) close(pb)
-
-  # -- Return -----------------------------------------------------------------
-
+ 
   list(
     train_x                  = train_x,
     train_y                  = train_y,
     cell_num                 = cell_num,
     celltypes                = ct_levels,
-    genes                    = rownames(counts),
-    elapsed                  = fmt_time(),
+    genes                    = gene_names,
+    elapsed                  = elapsed,
     settings = list(
       d_prior           = d_prior,
       n                 = n,
@@ -460,17 +464,7 @@ scaden_sim_pb <- function(
 #' training matrix and real bulk matrix are restricted to a shared gene set.
 #' Optionally, genes can first be filtered by variance on the bulk data.
 #'
-#' 
-#' @references
-#' Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber, K.,
-#' Heutink, P., & Bonn, S. (2020). Deep learning-based cell composition analysis
-#' from tissue expression profiles. \emph{Science Advances}, 6(30), eaba2619.
-#'
-#' TAPE project PyTorch implementation:
-#' \url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
-#' 
 #' @importFrom matrixStats rowMins rowMaxs colVars
-#' @importFrom stats setNames
 #'
 #' @examples
 #' \dontrun{
@@ -504,9 +498,8 @@ scaden_process <- function(sim_data,
     sprintf("%02d:%02d:%02d", secs %/% 3600L, (secs %% 3600L) %/% 60L, secs %% 60L)
   }
 
-  log_msg <- function(...) {
-    if (verbose) cat(sprintf("[%s] %s\n", fmt_time(), sprintf(...)))
-  }
+  say  <- function(s) if (verbose) cat(s)
+  padn <- function(x, w) formatC(x, width = w)          # right-aligned integer
 
   normalize <- function(x, method) {
     if (method == "none") return(x)
@@ -525,7 +518,7 @@ scaden_process <- function(sim_data,
     hit_cols <- if (!is.null(cn)) length(intersect(cn, target_genes)) else 0L
 
     if (hit_cols > hit_rows) return(mat)            # already samples x genes
-    if (hit_rows > hit_cols) return(t(mat))         
+    if (hit_rows > hit_cols) return(t(mat))         # genes x samples -> transpose
 
     # Tie-break on dimension match
     if (!is.null(rn) && nrow(mat) == length(target_genes)) return(t(mat))
@@ -554,65 +547,103 @@ scaden_process <- function(sim_data,
   if (is.null(colnames(train_y)))
     colnames(train_y) <- paste0("celltype_", seq_len(ncol(train_y)))
 
-  log_msg("Processing Scaden training data ...")
-  log_msg("Input: %d samples, %d genes, %d cell types",
-          nrow(train_x), ncol(train_x), ncol(train_y))
+  ns_tr <- nrow(train_x); ng_in <- ncol(train_x); nct <- ncol(train_y)
 
-  # -- Process bulk (test) data -----------------------------------------------
+  # -- Orient + validate bulk (test) data (compute dims before printing) ------
 
   genes_keep <- colnames(train_x)
   test_x     <- NULL
+  have_bulk  <- !is.null(bulk_data)
 
-  if (!is.null(bulk_data)) {
+  if (have_bulk) {
     bulk_x <- orient_to_samples_x_genes(as.matrix(bulk_data), genes_keep, "bulk_data")
-
     if (is.null(colnames(bulk_x)))
       stop("`bulk_data` must have gene names in row or column names.")
     if (is.null(rownames(bulk_x)))
       rownames(bulk_x) <- paste0("sample_", seq_len(nrow(bulk_x)))
+    ns_bk <- nrow(bulk_x); ng_bk <- ncol(bulk_x)
+  }
 
-    log_msg("Bulk data: %d samples, %d genes", nrow(bulk_x), ncol(bulk_x))
+  # -- Header (aligned input / bulk block) ------------------------------------
 
-    # -- Gene filtering (variance on bulk) ------------------------------------
+  ssw <- max(nchar(ns_tr), if (have_bulk) nchar(ns_bk) else 0L)   # sample col width
+  sgw <- max(nchar(ng_in), if (have_bulk) nchar(ng_bk) else 0L)   # gene col width
 
-    if (!is.null(var_cutoff) || !is.null(top_var_genes)) {
+  say("Processing Scaden training data\n\n")
+  say(sprintf("  %-5s %s samples   %s genes   %d cell types\n",
+              "input", padn(ns_tr, ssw), padn(ng_in, sgw), nct))
+  if (have_bulk)
+    say(sprintf("  %-5s %s samples   %s genes\n",
+                "bulk", padn(ns_bk, ssw), padn(ng_bk, sgw)))
+
+  # -- Gene filtering ---------------------------------------------------------
+
+  if (have_bulk) {
+    do_filter <- !is.null(var_cutoff) || !is.null(top_var_genes)
+
+    # Pre-compute funnel column widths so every row lines up.
+    flabels <- character(0)
+    if (!is.null(var_cutoff))    flabels <- c(flabels, sprintf("variance > %g", var_cutoff))
+    if (!is.null(top_var_genes)) flabels <- c(flabels, "top variable genes")
+    flabels <- c(flabels, "shared with training")
+    lw <- max(nchar(flabels))            # label width
+    nw <- nchar(ng_bk)                   # number width (counts only shrink)
+
+    frow <- function(label, before, after)
+      say(sprintf("    %-*s %s \u2192 %s\n", lw, label, padn(before, nw), padn(after, nw)))
+
+    if (do_filter) {
+      say("\n  gene filtering\n")
       gene_var <- setNames(matrixStats::colVars(bulk_x), colnames(bulk_x))
 
       if (!is.null(var_cutoff)) {
-        before <- length(gene_var)
+        before   <- length(gene_var)
         gene_var <- gene_var[gene_var > var_cutoff]
-        log_msg("Variance cutoff > %g: %d -> %d genes", var_cutoff, before, length(gene_var))
+        frow(sprintf("variance > %g", var_cutoff), before, length(gene_var))
       }
-
       if (!is.null(top_var_genes) && length(gene_var) > 0L) {
-        top_n <- min(as.integer(top_var_genes), length(gene_var))
+        before   <- length(gene_var)
+        top_n    <- min(as.integer(top_var_genes), length(gene_var))
         gene_var <- sort(gene_var, decreasing = TRUE)[seq_len(top_n)]
-        log_msg("Top variable genes: kept %d", top_n)
+        frow("top variable genes", before, top_n)
       }
-
       bulk_genes <- names(gene_var)
     } else {
       bulk_genes <- colnames(bulk_x)
     }
 
+    before     <- length(bulk_genes)
     genes_keep <- intersect(genes_keep, bulk_genes)
-    log_msg("Shared genes after filtering: %d", length(genes_keep))
+    if (do_filter) frow("shared with training", before, length(genes_keep))
+    else           say(sprintf("\n  shared genes with training: %d\n", length(genes_keep)))
 
     if (length(genes_keep) == 0L)
       stop("No genes remain after intersection - check that training and bulk gene names match.")
-
-    test_x <- normalize(bulk_x[, genes_keep, drop = FALSE], normalize_test)
-    log_msg("Normalised test data (%s): %d samples x %d genes",
-            normalize_test, nrow(test_x), ncol(test_x))
   }
 
-  # -- Subset and normalise training data -------------------------------------
+  # -- Normalisation (aligned block; printed live) ----------------------------
+
+  ng_final <- length(genes_keep)
+  nlw <- max(nchar("training"), if (have_bulk) nchar("test") else 0L)
+  nmw <- max(nchar(normalize_train), if (have_bulk) nchar(normalize_test) else 0L)
+  nsw <- max(nchar(ns_tr), if (have_bulk) nchar(ns_tr) else 0L)
+  if (have_bulk) nsw <- max(nsw, nchar(ns_bk))
+
+  norm_row <- function(tag, method, ns)
+    say(sprintf("    %-*s %-*s %s \u00d7 %d genes\n",
+                nlw, tag, nmw, method, padn(ns, nsw), ng_final))
+
+  say("\n  normalisation\n")
+
+  if (have_bulk) {
+    test_x <- normalize(bulk_x[, genes_keep, drop = FALSE], normalize_test)
+    norm_row("test", normalize_test, nrow(test_x))
+  }
 
   train_x <- normalize(train_x[, genes_keep, drop = FALSE], normalize_train)
-  log_msg("Normalised training data (%s): %d samples x %d genes",
-          normalize_train, nrow(train_x), ncol(train_x))
+  norm_row("training", normalize_train, nrow(train_x))
 
-  log_msg("Done")
+  say(sprintf("\nDone in %s\n", fmt_time()))
 
   # -- Return -----------------------------------------------------------------
 
@@ -724,20 +755,7 @@ reproducibility <- function(seed = 9) {
 #' @details
 #' The ensemble consists of three feed-forward neural networks with softmax
 #' output. Predictions are averaged across the three trained models in
-#' [scaden_predict()]. This function implements the Scaden framework described by Menden et al.
-#' (2020). The present implementation follows the PyTorch realization used in
-#' the TAPE project, specifically the Scaden-related model definition provided
-#' in `TAPE/model.py`, while preserving the three-model ensemble design and
-#' prediction strategy of Scaden.
-#' 
-#' 
-#' @references
-#' Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber, K.,
-#' Heutink, P., & Bonn, S. (2020). Deep learning-based cell composition analysis
-#' from tissue expression profiles. \emph{Science Advances}, 6(30), eaba2619.
-#'
-#' TAPE project PyTorch implementation:
-#' \url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
+#' [scaden_predict()].
 #'
 #' @importFrom torch torch_manual_seed cuda_is_available torch_device
 #' @importFrom torch nn_sequential nn_linear nn_dropout nn_relu nn_softmax
@@ -764,7 +782,7 @@ scaden <- function(train_x,
                    epochs = 20,
                    seed = 123,
                    device = NULL) {
-  
+
   scaden_ascii <- r"(Running
      ____                _            
     / ___|  ___ __ _  __| | ___ _ __  
@@ -773,7 +791,8 @@ scaden <- function(train_x,
     |____/ \___\__,_|\__,_|\___|_| |_|
   )"
 
-  cat("\033[35m", "\033[1m", scaden_ascii, "\033[0m", sep = "")
+  # Plain (default terminal color), consistent with the progress bar below.
+  cat(scaden_ascii, "\n", sep = "")
 
   reproducibility(seed)
 
@@ -846,12 +865,12 @@ scaden <- function(train_x,
       sprintf("%02d:%02d:%02d", h, m, s)
     }
 
-    make_bar <- function(i, n, width = 30L) {
-      filled <- if (n > 0) floor(width * i / n) else 0L
-      paste0(
-        paste(rep("=", filled), collapse = ""),
-        paste(rep("-", width - filled), collapse = "")
-      )
+    # Block-style bar matching scaden_sim_pb's draw_progress (plain color):
+    # solid blocks for progress, light blocks for the remainder.
+    make_bar <- function(i, n, width = 32L) {
+      frac  <- if (n > 0) min(1, i / n) else 1
+      nfill <- as.integer(round(frac * width))
+      paste0(strrep("\u2588", nfill), strrep("\u2591", width - nfill))
     }
 
     start_time <- Sys.time()
@@ -879,16 +898,19 @@ scaden <- function(train_x,
       avg_per_epoch <- elapsed / i
       eta <- avg_per_epoch * (epochs - i)
 
+      pct <- if (epochs > 0) as.integer(round(100 * i / epochs)) else 100L
+
       cat(sprintf(
-        "\r%s | [%s] %3d/%3d | mean loss %.6f | elapsed %s | ETA %s",
+        "\r%-9s |%s| %3d%% | %3d/%3d | loss %.6f | elapsed %s | ETA %s",
         model_name,
-        make_bar(i, epochs, width = 30L),
+        make_bar(i, epochs, width = 32L),
+        pct,
         i, epochs,
         epoch_loss[i],
         format_secs(elapsed),
         format_secs(eta)
       ))
-      utils::flush.console()
+      flush.console()
     }
 
     cat("\n")
@@ -1000,7 +1022,6 @@ scaden <- function(train_x,
 
 
 
-
 #' Predict cell-type proportions with a trained Scaden ensemble
 #'
 #' Uses a fitted Scaden ensemble returned by [scaden()] to predict cell-type
@@ -1025,15 +1046,6 @@ scaden <- function(train_x,
 #' @details
 #' Predictions are generated independently for all three ensemble members and
 #' then averaged sample-wise.
-#' 
-#' 
-#' @references
-#' Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber, K.,
-#' Heutink, P., & Bonn, S. (2020). Deep learning-based cell composition analysis
-#' from tissue expression profiles. \emph{Science Advances}, 6(30), eaba2619.
-#'
-#' TAPE project PyTorch implementation:
-#' \url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
 #'
 #' @importFrom torch torch_tensor torch_float with_no_grad as_array torch_device
 #'

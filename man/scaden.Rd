@@ -69,11 +69,7 @@ matching target matrix with cell-type proportions.
 \details{
 The ensemble consists of three feed-forward neural networks with softmax
 output. Predictions are averaged across the three trained models in
-[scaden_predict()]. This function implements the Scaden framework described by Menden et al.
-(2020). The present implementation follows the PyTorch realization used in
-the TAPE project, specifically the Scaden-related model definition provided
-in `TAPE/model.py`, while preserving the three-model ensemble design and
-prediction strategy of Scaden.
+[scaden_predict()].
 }
 \examples{
 \dontrun{
@@ -86,12 +82,4 @@ fit <- scaden(
 )
 }
 
-}
-\references{
-Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber, K.,
-Heutink, P., & Bonn, S. (2020). Deep learning-based cell composition analysis
-from tissue expression profiles. \emph{Science Advances}, 6(30), eaba2619.
-
-TAPE project PyTorch implementation:
-\url{https://github.com/poseidonchan/TAPE/blob/main/TAPE/model.py}
 }
