@@ -2,12 +2,12 @@
 % Please edit documentation in R/quasar_sim_bulk.R
 \name{quasar_sim_bulk}
 \alias{quasar_sim_bulk}
-\title{Generate QUASAR pseudobulk mixtures and optional signature matrices}
+\title{Simulate pseudo-bulk RNA-seq profiles from single-cell data}
 \usage{
 quasar_sim_bulk(
   ...,
-  n_bulk_samples,
-  cells_per_bulk,
+  n_bulk_samples = NULL,
+  cells_per_bulk = 500,
   cell_type_column = "cell_type",
   patient_id_column = NULL,
   select_ct = NULL,
@@ -20,150 +20,143 @@ quasar_sim_bulk(
   return_used_samples = FALSE,
   return_patient_metadata = FALSE,
   return_signature_matrix = FALSE,
-  verbose = FALSE
+  verbose = TRUE
 )
 }
 \arguments{
-\item{...}{Input data. Supported formats are:
+\item{...}{The single-cell reference, supplied in one of two forms:
 \itemize{
-  \item a single \code{Seurat} object containing RNA counts and metadata,
-  \item a single \code{SingleCellExperiment} object containing counts and
-  column metadata,
-  \item or two objects: a gene-by-cell count matrix and a metadata
-  \code{data.frame} with cells in rows.
+  \item A single object: a \code{Seurat} object (counts taken from the
+    \code{"RNA"} assay) or a \code{SingleCellExperiment} (counts taken from
+    \code{counts()}).
+  \item Two objects: a genes \eqn{\times} cells count matrix followed by a
+    cell-metadata \code{data.frame} whose row names match the column names
+    of the count matrix.
 }}
 
-\item{n_bulk_samples}{Integer. Number of pseudobulk samples to generate.}
+\item{n_bulk_samples}{Integer number of pseudo-bulk samples to generate. If
+\code{NULL} (default), \code{1000 * (number of cell types)} samples are
+generated.}
 
-\item{cells_per_bulk}{Integer. Number of cells to sample per
-pseudobulk sample.}
+\item{cells_per_bulk}{Integer number of cells pooled into each pseudo-bulk
+sample. Default \code{500}.}
 
-\item{cell_type_column}{Character. Name of the metadata column containing
-cell-type annotations.}
+\item{cell_type_column}{Name of the metadata column holding cell-type labels.
+Default \code{"cell_type"}.}
 
-\item{patient_id_column}{Optional character. Name of the metadata column
-containing patient IDs. If provided, one patient is sampled per pseudobulk
-and cells are preferentially drawn from that patient.}
+\item{patient_id_column}{Optional name of a metadata column holding
+patient/donor IDs. When supplied, each pseudo-bulk is drawn from a single
+donor where that donor has cells of the required type (falling back to the
+full cell-type pool otherwise). Default \code{NULL} (no patient structure).}
 
-\item{select_ct}{Optional character vector. Cell types to retain. If
-\code{NULL}, all cell types are used.}
+\item{select_ct}{Optional character vector restricting which cell types are
+used (and fixing their order in the output). Default \code{NULL} (all cell
+types).}
 
-\item{dirich_alpha}{Numeric. Dirichlet concentration parameter used to sample
-cell-type fractions. Smaller values lead to more uneven mixtures.}
+\item{dirich_alpha}{Concentration parameter of the symmetric Dirichlet used
+to draw cell-type fractions. Smaller values give more skewed mixtures.
+Default \code{1} (uniform over the simplex).}
 
-\item{seet}{Integer. Random seed for reproducible sampling.}
+\item{seet}{Integer random seed (passed to \code{set.seed}) for
+reproducibility. Default \code{1}.}
 
-\item{sparse}{Logical. If \code{TRUE}, randomly sets a proportion of sampled
-cell-type fractions to zero before renormalization.}
+\item{sparse}{Logical; if \code{TRUE}, randomly zero out a fraction of
+cell-type entries before renormalisation, producing samples in which some
+cell types are absent. Default \code{FALSE}.}
 
-\item{sparse_prob}{Numeric between 0 and 1. Probability of setting a
-cell-type fraction to zero when \code{sparse = TRUE}.}
+\item{sparse_prob}{Probability that a given cell-type fraction is dropped
+when \code{sparse = TRUE}. Default \code{0.5}.}
 
-\item{rare}{Logical. If \code{TRUE}, randomly replaces some cell-type
-fractions with small values to mimic rare populations.}
+\item{rare}{Logical; if \code{TRUE}, force a random subset of cell-type
+fractions to small values in \code{[0, 0.03]} before renormalisation, to
+emulate rare populations. Default \code{FALSE}.}
 
-\item{rare_percentage}{Numeric between 0 and 1. Proportion of entries in the
-fraction matrix affected when \code{rare = TRUE}.}
+\item{rare_percentage}{Probability that a given cell-type fraction is made
+rare when \code{rare = TRUE}. Default \code{0.4}.}
 
-\item{return_used_samples}{Logical. If \code{TRUE}, returns the sampled cell
-indices used for each pseudobulk sample and cell type.}
+\item{return_used_samples}{Logical; if \code{TRUE}, include the per-sample,
+per-cell-type cell indices that were drawn. Default \code{FALSE}.}
 
-\item{return_patient_metadata}{Logical. If \code{TRUE} and
-\code{patient_id_column} is provided, returns the sampled patient ID for
-each pseudobulk sample.}
+\item{return_patient_metadata}{Logical; if \code{TRUE} and
+\code{patient_id_column} is set, include a data frame mapping each
+pseudo-bulk to its source donor. Default \code{FALSE}.}
 
-\item{return_signature_matrix}{Logical. If \code{TRUE}, computes and returns
-both bulk-specific signature profiles and a global signature matrix.}
+\item{return_signature_matrix}{Logical; if \code{TRUE}, also compute
+per-cell-type signature profiles (one genes \eqn{\times} bulk matrix per
+cell type) and a global genes \eqn{\times} cell-types signature matrix.
+Default \code{FALSE}.}
 
-\item{verbose}{Logical. If \code{TRUE}, prints a short runtime summary.}
+\item{verbose}{Logical; if \code{TRUE} (default), print the header, progress
+bars, and timing summary. If \code{FALSE}, nothing is printed.}
 }
 \value{
-A list with at least the following components:
-\describe{
-  \item{bulk_expression_profiles}{Numeric matrix of pseudobulk expression
-  profiles with genes in rows and pseudobulk samples in columns.}
-  \item{ground_truth_proportions}{Numeric matrix of realized cell-type
-  proportions with pseudobulk samples in rows and cell types in columns.}
-  \item{timing}{Named list containing runtime information for pseudobulk
-  generation, optional signature computation, and total execution time.}
-}
-
-Depending on the selected options, the returned list may also contain:
-\describe{
-  \item{used_samples_by_ct}{List of sampled cell indices per pseudobulk sample
-  and cell type.}
-  \item{bulk_patient_metadata}{\code{data.frame} linking simulated bulk
-  sample IDs to sampled patient IDs.}
-  \item{bulk_signature_profiles}{List of gene-by-bulk signature matrices, one
-  per cell type.}
-  \item{global_signature_matrix}{Numeric gene-by-cell-type matrix containing
-  the global signature profiles.}
-}
+A named list containing:
+  \describe{
+    \item{\code{bulk_expression_profiles}}{Genes \eqn{\times}
+      \code{n_bulk_samples} matrix of summed pseudo-bulk counts.}
+    \item{\code{ground_truth_proportions}}{\code{n_bulk_samples} \eqn{\times}
+      cell-types matrix of realized proportions (rows sum to 1).}
+    \item{\code{used_samples_by_ct}}{(if \code{return_used_samples}) list of
+      length \code{n_bulk_samples}, each a per-cell-type list of drawn cell
+      indices.}
+    \item{\code{bulk_patient_metadata}}{(if \code{return_patient_metadata}
+      and patient mode) data frame mapping \code{sample_id} to
+      \code{patient_id}.}
+    \item{\code{bulk_signature_profiles}}{(if \code{return_signature_matrix})
+      list of per-cell-type genes \eqn{\times} bulk mean-expression
+      matrices.}
+    \item{\code{global_signature_matrix}}{(if \code{return_signature_matrix})
+      genes \eqn{\times} cell-types matrix of mean signatures.}
+    \item{\code{timing}}{list with \code{pseudobulk_seconds},
+      \code{signature_seconds}, and \code{total_seconds}.}
+  }
 }
 \description{
-Simulates pseudobulk RNA-seq expression profiles from single-cell count data
-for QUASAR. Pseudobulk samples are generated by drawing cell-type proportions
-from a Dirichlet distribution and sampling cells with replacement from the
-corresponding cell-type pools. The function can also return bulk-specific
-signature profiles for each cell type and a global signature matrix.
+Generates pseudo-bulk expression profiles by sampling cells from a
+single-cell reference according to Dirichlet-drawn cell-type fractions.
+Optionally returns per-cell-type signature profiles and a global signature matrix.
 }
 \details{
-Input can be provided as a single \code{Seurat} object, a single
-\code{SingleCellExperiment} object, or as a count matrix together with a
-matching metadata table.
-
-
-For each pseudobulk sample, cell-type fractions are drawn from a Dirichlet
-distribution and converted into integer cell counts using
-\code{cells_per_bulk}. Cells are then sampled with replacement and summed to
-create bulk expression profiles.
-
-In patient-aware mode, one patient is sampled for each pseudobulk sample.
-Cells are preferentially drawn from that patient's cells within each cell
-type. If a patient-specific pool is empty for a given cell type, the full
-cell-type pool is used as fallback.
-
-If \code{return_signature_matrix = TRUE}, the function additionally computes:
-\itemize{
-  \item \code{bulk_signature_profiles}: a list of gene-by-bulk matrices, one
-  per cell type, containing bulk-specific mean expression profiles based on
-  the realized sampled cells;
-  \item \code{global_signature_matrix}: a gene-by-cell-type matrix obtained
-  by averaging the bulk-specific signature profiles across all pseudobulk
-  samples.
-}
-
-The returned ground-truth proportions are based on the realized sampled cell
-counts per cell type and bulk sample.
+Cell-type fractions are drawn from a symmetric Dirichlet, optionally modified
+by the \code{sparse}/\code{rare} masks, renormalised per sample, and turned
+into integer cell counts (each bulk is guaranteed at least one cell).
+Cells are then sampled with replacement from the reference and summed to form each pseudo-bulk,
+so the returned \code{ground_truth_proportions} reflect the *realized* allocations rather
+than the raw Dirichlet draws.
 }
 \examples{
-
 \dontrun{
+## Tiny synthetic reference: 1000 genes, 3 cell types, 100 cells each
 set.seed(1)
-counts <- matrix(rpois(2000, lambda = 5), nrow = 100, ncol = 20)
-rownames(counts) <- paste0("gene_", seq_len(nrow(counts)))
-colnames(counts) <- paste0("cell_", seq_len(ncol(counts)))
+n_genes        <- 1000
+cell_types     <- c("Tcell", "Bcell", "Mono")
+cells_per_type <- 100
+n_cells        <- length(cell_types) * cells_per_type
+
+counts <- matrix(
+  rpois(n_genes * n_cells, lambda = 5),
+  nrow = n_genes, ncol = n_cells
+)
+rownames(counts) <- paste0("gene_", seq_len(n_genes))
+colnames(counts) <- paste0("cell_", seq_len(n_cells))
 
 meta <- data.frame(
-  cell_type = rep(c("T", "B"), each = 10),
-  patient_id = rep(c("P1", "P2"), times = 10),
+  cell_type = rep(cell_types, each = cells_per_type),
   row.names = colnames(counts)
 )
 
+## Generate 50 pseudo-bulks of 100 cells each, with signatures
 res <- quasar_sim_bulk(
   counts, meta,
-  n_bulk_samples = 5,
-  cells_per_bulk = 50,
-  cell_type_column = "cell_type",
-  patient_id_column = "patient_id",
-  return_signature_matrix = TRUE
+  n_bulk_samples          = 50,
+  cells_per_bulk          = 100,
+  return_signature_matrix = TRUE,
+  verbose                 = FALSE
 )
 
-dim(res$bulk_expression_profiles)
-dim(res$ground_truth_proportions)
-dim(res$global_signature_matrix)
-
+dim(res$bulk_expression_profiles)   # 1000 x 50
+head(res$ground_truth_proportions)  # rows sum to 1
+dim(res$global_signature_matrix)    # 1000 x 3
 }
-
 
 }
