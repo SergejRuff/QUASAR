@@ -116,14 +116,31 @@ The output is structured to plug directly into [scaden_process()] and
 and `train_y` as a samples x cell-types matrix.
 }
 \examples{
-\dontrun{
-sim <- scaden_sim_pb(
-  sc_data = sce,
-  celltype_col = "celltype",
-  samplenum = 5000,
-  n = 500,
-  seed = 123
+set.seed(1)
+n_genes        <- 1000
+cell_types     <- c("Tcell", "Bcell", "Mono")
+cells_per_type <- 100
+n_cells        <- length(cell_types) * cells_per_type
+
+counts <- matrix(
+  rpois(n_genes * n_cells, lambda = 5),
+  nrow = n_genes, ncol = n_cells
 )
-}
+rownames(counts) <- paste0("gene", seq_len(n_genes))
+colnames(counts) <- paste0("cell", seq_len(n_cells))
+
+meta <- data.frame(
+  cell_type = rep(cell_types, each = cells_per_type),
+  row.names = colnames(counts)
+)
+sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+
+## Simulate training pseudobulks (samples x genes) ------------------------
+train_sim <- scaden_sim_pb(
+  sc, celltype_col = "cell_type",
+  samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
+)
+
+print(head(train_sim$train_x))
 
 }

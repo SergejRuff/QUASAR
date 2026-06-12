@@ -76,15 +76,32 @@
 #' @importFrom stats runif
 #'
 #' @examples
-#' \dontrun{
-#' sim <- scaden_sim_pb(
-#'   sc_data = sce,
-#'   celltype_col = "celltype",
-#'   samplenum = 5000,
-#'   n = 500,
-#'   seed = 123
+#' set.seed(1)
+#' n_genes        <- 1000
+#' cell_types     <- c("Tcell", "Bcell", "Mono")
+#' cells_per_type <- 100
+#' n_cells        <- length(cell_types) * cells_per_type
+#'
+#' counts <- matrix(
+#'   rpois(n_genes * n_cells, lambda = 5),
+#'   nrow = n_genes, ncol = n_cells
 #' )
-#' }
+#' rownames(counts) <- paste0("gene", seq_len(n_genes))
+#' colnames(counts) <- paste0("cell", seq_len(n_cells))
+#'
+#' meta <- data.frame(
+#'   cell_type = rep(cell_types, each = cells_per_type),
+#'   row.names = colnames(counts)
+#' )
+#' sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+#'
+#' ## Simulate training pseudobulks (samples x genes) ------------------------
+#' train_sim <- scaden_sim_pb(
+#'   sc, celltype_col = "cell_type",
+#'   samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
+#' )
+#' 
+#' print(head(train_sim$train_x))
 #'
 #' @export
 scaden_sim_pb <- function(
@@ -434,9 +451,9 @@ scaden_sim_pb <- function(
 #' @param top_var_genes Optional integer scalar. If provided, only the top most
 #'   variable genes in `bulk_data` are kept after applying `var_cutoff`.
 #' @param normalize_train Character scalar specifying the transformation applied
-#'   to the training matrix. One of `"log1p_minmax"`, `"log1p"`, or `"none"`.
+#'   to the training matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.
 #' @param normalize_test Character scalar specifying the transformation applied
-#'   to the test matrix. One of `"log1p_minmax"`, `"log1p"`, or `"none"`.
+#'   to the test matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.
 #' @param verbose Logical scalar. If `TRUE`, prints progress messages and
 #'   elapsed time.
 #'
@@ -467,23 +484,51 @@ scaden_sim_pb <- function(
 #' @importFrom matrixStats rowMins rowMaxs colVars
 #'
 #' @examples
-#' \dontrun{
-#' proc <- scaden_process(
-#'   sim_data = sim,
-#'   bulk_data = bulk_mat,
-#'   var_cutoff = 0.1,
-#'   normalize_train = "log1p_minmax",
-#'   normalize_test = "log1p_minmax"
+#' ## Build a tiny single-cell reference (genes x cells) ---------------------
+#' set.seed(1)
+#' n_genes        <- 1000
+#' cell_types     <- c("Tcell", "Bcell", "Mono")
+#' cells_per_type <- 100
+#' n_cells        <- length(cell_types) * cells_per_type
+#'
+#' counts <- matrix(
+#'   rpois(n_genes * n_cells, lambda = 5),
+#'   nrow = n_genes, ncol = n_cells
 #' )
-#' }
+#' rownames(counts) <- paste0("gene", seq_len(n_genes))
+#' colnames(counts) <- paste0("cell", seq_len(n_cells))
+#'
+#' meta <- data.frame(
+#'   cell_type = rep(cell_types, each = cells_per_type),
+#'   row.names = colnames(counts)
+#' )
+#' sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+#'
+#' ## Simulate training pseudobulks (samples x genes) ------------------------
+#' train_sim <- scaden_sim_pb(
+#'   sc, celltype_col = "cell_type",
+#'   samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
+#' )
+#'
+#' ## Simulate a separate set to stand in for the real bulk ------------------
+#' test_sim <- scaden_sim_pb(
+#'   sc, celltype_col = "cell_type",
+#'   samplenum = 10, n = 100, sparse = FALSE, seed = 2, verbose = FALSE
+#' )
+#' real_bulk <- t(test_sim$train_x)   # scaden_process expects genes x samples
+#'
+#' ## Variance filter, gene intersection, log2 + per-sample min-max ----------
+#' proc <- scaden_process(train_sim, bulk_data = real_bulk)
+#' print(str(proc$train_x))
+#' print(str(proc$test_x))
 #'
 #' @export
 scaden_process <- function(sim_data,
   bulk_data = NULL,
   var_cutoff = 0.1,
   top_var_genes = NULL,
-  normalize_train = c("log1p_minmax", "log1p", "none"),
-  normalize_test  = c("log1p_minmax", "log1p", "none"),
+  normalize_train = c("log2_minmax", "log2", "none"),
+  normalize_test  = c("log2_minmax", "log2", "none"),
   verbose = TRUE) {
 
   normalize_train <- match.arg(normalize_train)
@@ -498,13 +543,13 @@ scaden_process <- function(sim_data,
     sprintf("%02d:%02d:%02d", secs %/% 3600L, (secs %% 3600L) %/% 60L, secs %% 60L)
   }
 
-  say  <- function(s) if (verbose) cat(s)
+
   padn <- function(x, w) formatC(x, width = w)          # right-aligned integer
 
   normalize <- function(x, method) {
     if (method == "none") return(x)
-    x <- log1p(x)
-    if (method == "log1p") return(x)
+    x <- log2(x + 1)
+    if (method == "log2") return(x)
     # log1p_minmax: row-wise min-max scaling
     mins  <- matrixStats::rowMins(x)
     range <- pmax(matrixStats::rowMaxs(x) - mins, 1e-8)
@@ -569,11 +614,11 @@ scaden_process <- function(sim_data,
   ssw <- max(nchar(ns_tr), if (have_bulk) nchar(ns_bk) else 0L)   # sample col width
   sgw <- max(nchar(ng_in), if (have_bulk) nchar(ng_bk) else 0L)   # gene col width
 
-  say("Processing Scaden training data\n\n")
-  say(sprintf("  %-5s %s samples   %s genes   %d cell types\n",
+  if (verbose) cat("Processing Scaden training data\n\n")
+  if (verbose) cat(sprintf("  %-5s %s samples   %s genes   %d cell types\n",
               "input", padn(ns_tr, ssw), padn(ng_in, sgw), nct))
   if (have_bulk)
-    say(sprintf("  %-5s %s samples   %s genes\n",
+    if (verbose) cat(sprintf("  %-5s %s samples   %s genes\n",
                 "bulk", padn(ns_bk, ssw), padn(ng_bk, sgw)))
 
   # -- Gene filtering ---------------------------------------------------------
@@ -590,10 +635,10 @@ scaden_process <- function(sim_data,
     nw <- nchar(ng_bk)                   # number width (counts only shrink)
 
     frow <- function(label, before, after)
-      say(sprintf("    %-*s %s \u2192 %s\n", lw, label, padn(before, nw), padn(after, nw)))
+      if (verbose) cat(sprintf("    %-*s %s \u2192 %s\n", lw, label, padn(before, nw), padn(after, nw)))
 
     if (do_filter) {
-      say("\n  gene filtering\n")
+      if (verbose) cat("\n  gene filtering\n")
       gene_var <- setNames(matrixStats::colVars(bulk_x), colnames(bulk_x))
 
       if (!is.null(var_cutoff)) {
@@ -615,7 +660,7 @@ scaden_process <- function(sim_data,
     before     <- length(bulk_genes)
     genes_keep <- intersect(genes_keep, bulk_genes)
     if (do_filter) frow("shared with training", before, length(genes_keep))
-    else           say(sprintf("\n  shared genes with training: %d\n", length(genes_keep)))
+    else           if (verbose) cat(sprintf("\n  shared genes with training: %d\n", length(genes_keep)))
 
     if (length(genes_keep) == 0L)
       stop("No genes remain after intersection - check that training and bulk gene names match.")
@@ -630,10 +675,10 @@ scaden_process <- function(sim_data,
   if (have_bulk) nsw <- max(nsw, nchar(ns_bk))
 
   norm_row <- function(tag, method, ns)
-    say(sprintf("    %-*s %-*s %s \u00d7 %d genes\n",
+    if (verbose) cat(sprintf("    %-*s %-*s %s \u00d7 %d genes\n",
                 nlw, tag, nmw, method, padn(ns, nsw), ng_final))
 
-  say("\n  normalisation\n")
+  if (verbose) cat("\n  normalisation\n")
 
   if (have_bulk) {
     test_x <- normalize(bulk_x[, genes_keep, drop = FALSE], normalize_test)
@@ -643,7 +688,7 @@ scaden_process <- function(sim_data,
   train_x <- normalize(train_x[, genes_keep, drop = FALSE], normalize_train)
   norm_row("training", normalize_train, nrow(train_x))
 
-  say(sprintf("\nDone in %s\n", fmt_time()))
+  if (verbose) cat(sprintf("\nDone in %s\n", fmt_time()))
 
   # -- Return -----------------------------------------------------------------
 

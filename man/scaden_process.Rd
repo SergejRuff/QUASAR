@@ -9,8 +9,8 @@ scaden_process(
   bulk_data = NULL,
   var_cutoff = 0.1,
   top_var_genes = NULL,
-  normalize_train = c("log1p_minmax", "log1p", "none"),
-  normalize_test = c("log1p_minmax", "log1p", "none"),
+  normalize_train = c("log2_minmax", "log2", "none"),
+  normalize_test = c("log2_minmax", "log2", "none"),
   verbose = TRUE
 )
 }
@@ -69,14 +69,42 @@ training matrix and real bulk matrix are restricted to a shared gene set.
 Optionally, genes can first be filtered by variance on the bulk data.
 }
 \examples{
-\dontrun{
-proc <- scaden_process(
-  sim_data = sim,
-  bulk_data = bulk_mat,
-  var_cutoff = 0.1,
-  normalize_train = "log1p_minmax",
-  normalize_test = "log1p_minmax"
+## Build a tiny single-cell reference (genes x cells) ---------------------
+set.seed(1)
+n_genes        <- 1000
+cell_types     <- c("Tcell", "Bcell", "Mono")
+cells_per_type <- 100
+n_cells        <- length(cell_types) * cells_per_type
+
+counts <- matrix(
+  rpois(n_genes * n_cells, lambda = 5),
+  nrow = n_genes, ncol = n_cells
 )
-}
+rownames(counts) <- paste0("gene", seq_len(n_genes))
+colnames(counts) <- paste0("cell", seq_len(n_cells))
+
+meta <- data.frame(
+  cell_type = rep(cell_types, each = cells_per_type),
+  row.names = colnames(counts)
+)
+sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+
+## Simulate training pseudobulks (samples x genes) ------------------------
+train_sim <- scaden_sim_pb(
+  sc, celltype_col = "cell_type",
+  samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
+)
+
+## Simulate a separate set to stand in for the real bulk ------------------
+test_sim <- scaden_sim_pb(
+  sc, celltype_col = "cell_type",
+  samplenum = 10, n = 100, sparse = FALSE, seed = 2, verbose = FALSE
+)
+real_bulk <- t(test_sim$train_x)   # scaden_process expects genes x samples
+
+## Variance filter, gene intersection, log2 + per-sample min-max ----------
+proc <- scaden_process(train_sim, bulk_data = real_bulk)
+print(str(proc$train_x))
+print(str(proc$test_x))
 
 }
