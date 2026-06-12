@@ -199,14 +199,36 @@ tape_extract_sc_data <- function(sc_data,
 #' @importFrom MCMCpack rdirichlet
 #' @importFrom stats runif
 #' @examples
-#' \dontrun{
-#' simudata <- tape_simulate(
-#'   sc_data = sce,
-#'   samplenum = 5000,
-#'   n = 500,
-#'   celltype_col = "CellType"
+#' 
+#' set.seed(1)
+#' n_genes        <- 1000
+#' cell_types     <- c("Tcell", "Bcell", "Mono")
+#' cells_per_type <- 100
+#' n_cells        <- length(cell_types) * cells_per_type
+#'
+#' counts <- matrix(
+#'   rpois(n_genes * n_cells, lambda = 5),
+#'   nrow = n_genes, ncol = n_cells
 #' )
-#' }
+#' rownames(counts) <- paste0("gene", seq_len(n_genes))
+#' colnames(counts) <- paste0("cell", seq_len(n_cells))
+#'
+#' meta <- data.frame(
+#'   cell_type = rep(cell_types, each = cells_per_type),
+#'   row.names = colnames(counts)
+#' )
+#' sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+#'
+#' 
+#' simudata <- tape_simulate(
+#'   sc_data = sc,
+#'   samplenum = 50,
+#'   n = 100,
+#'   celltype_col = "cell_type"
+#' )
+#' 
+#' print(names(simudata))
+#' 
 #' @export
 tape_simulate <- function(sc_data,
                           d_prior = NULL,
@@ -347,11 +369,11 @@ tape_simulate <- function(sc_data,
 
   tape_log("Simulation finished", start_time = sim_start)
 
-  list(
+  return(list(
     X   = sample_mat,
     obs = prop_df,
     var = data.frame(row.names = genename)
-  )
+  ))
 }
 
 

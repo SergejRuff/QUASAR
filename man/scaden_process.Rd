@@ -30,10 +30,10 @@ simulated training genes.}
 variable genes in `bulk_data` are kept after applying `var_cutoff`.}
 
 \item{normalize_train}{Character scalar specifying the transformation applied
-to the training matrix. One of `"log1p_minmax"`, `"log1p"`, or `"none"`.}
+to the training matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.}
 
 \item{normalize_test}{Character scalar specifying the transformation applied
-to the test matrix. One of `"log1p_minmax"`, `"log1p"`, or `"none"`.}
+to the test matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.}
 
 \item{verbose}{Logical scalar. If `TRUE`, prints progress messages and
 elapsed time.}
