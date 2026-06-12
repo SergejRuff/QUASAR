@@ -125,7 +125,7 @@ so the returned \code{ground_truth_proportions} reflect the *realized* allocatio
 than the raw Dirichlet draws.
 }
 \examples{
-\dontrun{
+
 ## Tiny synthetic reference: 1000 genes, 3 cell types, 100 cells each
 set.seed(1)
 n_genes        <- 1000
@@ -151,12 +151,12 @@ res <- quasar_sim_bulk(
   n_bulk_samples          = 50,
   cells_per_bulk          = 100,
   return_signature_matrix = TRUE,
-  verbose                 = FALSE
+  verbose                 = TRUE
 )
 
 dim(res$bulk_expression_profiles)   # 1000 x 50
 head(res$ground_truth_proportions)  # rows sum to 1
 dim(res$global_signature_matrix)    # 1000 x 3
-}
+
 
 }
