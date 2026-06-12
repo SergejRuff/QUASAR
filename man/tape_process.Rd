@@ -43,10 +43,43 @@ The current implementation applies scaling row-wise after `log1p`
 transformation, matching the intended sample-wise scaling direction.
 }
 \examples{
-\dontrun{
-processed <- tape_process(
-  simudata = simudata,
-  real_bulk = bulk_mat
+
+## Build a tiny single-cell reference (genes x cells) ---------------------
+set.seed(1)
+n_genes        <- 1000
+cell_types     <- c("Tcell", "Bcell", "Mono")
+cells_per_type <- 100
+n_cells        <- length(cell_types) * cells_per_type
+
+counts <- matrix(
+  rpois(n_genes * n_cells, lambda = 5),
+  nrow = n_genes, ncol = n_cells
 )
-}
+rownames(counts) <- paste0("gene", seq_len(n_genes))
+colnames(counts) <- paste0("cell", seq_len(n_cells))
+
+meta <- data.frame(
+  cell_type = rep(cell_types, each = cells_per_type),
+  row.names = colnames(counts)
+)
+sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+
+## Simulate training pseudobulks (samples x genes) ------------------------
+train_sim <- tape_simulate(
+  sc, celltype_col = "cell_type",
+  samplenum = 50, n = 100, sparse = FALSE, random_state = 1
+)
+
+## Simulate a separate set to stand in for the real bulk ------------------
+test_sim <- tape_simulate(
+  sc, celltype_col = "cell_type",
+  samplenum = 10, n = 100, sparse = FALSE, random_state = 2
+)
+real_bulk <- t(test_sim$X)   # tape_process expects genes x samples
+
+## Variance filter, gene intersection, log1p, per-sample scaling ----------
+processed <- tape_process(train_sim, real_bulk, scaler = "mms")
+head(processed$train_x)
+head(processed$test_x)
+
 }

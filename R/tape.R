@@ -403,117 +403,138 @@ tape_simulate <- function(sc_data,
 #'
 #' @importFrom stats var sd
 #' @examples
-#' \dontrun{
-#' processed <- tape_process(
-#'   simudata = simudata,
-#'   real_bulk = bulk_mat
+#' 
+#' ## Build a tiny single-cell reference (genes x cells) ---------------------
+#' set.seed(1)
+#' n_genes        <- 1000
+#' cell_types     <- c("Tcell", "Bcell", "Mono")
+#' cells_per_type <- 100
+#' n_cells        <- length(cell_types) * cells_per_type
+#'
+#' counts <- matrix(
+#'   rpois(n_genes * n_cells, lambda = 5),
+#'   nrow = n_genes, ncol = n_cells
 #' )
-#' }
+#' rownames(counts) <- paste0("gene", seq_len(n_genes))
+#' colnames(counts) <- paste0("cell", seq_len(n_cells))
+#'
+#' meta <- data.frame(
+#'   cell_type = rep(cell_types, each = cells_per_type),
+#'   row.names = colnames(counts)
+#' )
+#' sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+#'
+#' ## Simulate training pseudobulks (samples x genes) ------------------------
+#' train_sim <- tape_simulate(
+#'   sc, celltype_col = "cell_type",
+#'   samplenum = 50, n = 100, sparse = FALSE, random_state = 1
+#' )
+#'
+#' ## Simulate a separate set to stand in for the real bulk ------------------
+#' test_sim <- tape_simulate(
+#'   sc, celltype_col = "cell_type",
+#'   samplenum = 10, n = 100, sparse = FALSE, random_state = 2
+#' )
+#' real_bulk <- t(test_sim$X)   # tape_process expects genes x samples
+#'
+#' ## Variance filter, gene intersection, log1p, per-sample scaling ----------
+#' processed <- tape_process(train_sim, real_bulk, scaler = "mms")
+#' head(processed$train_x)
+#' head(processed$test_x)
+#' 
 #' @export
 tape_process <- function(simudata, real_bulk,
                          variance_threshold = 0.98,
                          scaler = "mms") {
-  # simudata: list with X (samples x genes), obs (samples x celltypes), gene_names
-  # real_bulk: matrix genes x samples
-  # Returns list: train_x, train_y, test_x, genename, celltypes, samplename
 
+ 
   proc_start <- Sys.time()
   tape_log("Processing started", start_time = proc_start)
-
-  train_x <- as.data.frame(simudata$X)      # samples x genes
+ 
+  train_x <- as.data.frame(simudata$X)      
   train_y <- as.matrix(simudata$obs)
   test_x  <- as.data.frame(t(real_bulk))    # samples x genes
-
+ 
   tape_log("Applying variance filtering", start_time = proc_start)
-
-  # Variance cutoff on training
+ 
+  pick_cutoff <- function(v, vt) {
+    k <- as.integer(length(v) * vt) + 1L          # 0-based int(n*vt) -> 1-based
+    k <- min(k, length(v))                         # guard (vt < 1 keeps k <= n)
+    sort(v, decreasing = TRUE)[k]
+  }
+ 
   train_var <- apply(train_x, 2, var)
-  cutoff_train <- sort(train_var, decreasing = TRUE)[as.integer(ncol(train_x) * variance_threshold)]
+  cutoff_train <- pick_cutoff(train_var, variance_threshold)
   train_x <- train_x[, train_var > cutoff_train, drop = FALSE]
-
-  # Variance cutoff on test
+ 
   test_var <- apply(test_x, 2, var)
-  cutoff_test <- sort(test_var, decreasing = TRUE)[as.integer(ncol(test_x) * variance_threshold)]
+  cutoff_test <- pick_cutoff(test_var, variance_threshold)
   test_x <- test_x[, test_var > cutoff_test, drop = FALSE]
+ 
 
-  # Intersect genes
   inter <- intersect(colnames(train_x), colnames(test_x))
   train_x <- train_x[, inter, drop = FALSE]
-  test_x <- test_x[, inter, drop = FALSE]
+  test_x  <- test_x[, inter, drop = FALSE]
   tape_log("Intersected gene number: %d", length(inter), start_time = proc_start)
-
-  genename <- inter
-  celltypes <- colnames(train_y)
+ 
+  genename   <- inter
+  celltypes  <- colnames(train_y)
   samplename <- rownames(test_x)
+ 
 
-  # Log transform
   tape_log("Applying log1p transform", start_time = proc_start)
   train_x <- log1p(as.matrix(train_x))
-  test_x <- log1p(as.matrix(test_x))
-
-  # Scaling
-  # Python:
-  # mms.fit_transform(train_x.T).T
-  # mms.fit_transform(test_x.T).T
-  # This is row-wise scaling on samples x genes matrices
+  test_x  <- log1p(as.matrix(test_x))
+ 
   tape_log("Applying %s scaling", scaler, start_time = proc_start)
+ 
 
   if (scaler == "mms") {
-    train_min <- apply(train_x, 1, min)
-    train_max <- apply(train_x, 1, max)
-    train_rng <- train_max - train_min
-    train_rng_safe <- train_rng
-    train_rng_safe[train_rng_safe == 0] <- 1
-    train_x <- sweep(train_x, 1, train_min, "-")
-    train_x <- sweep(train_x, 1, train_rng_safe, "/")
-    if (any(train_rng == 0)) {
-      train_x[train_rng == 0, ] <- 0
+    # sklearn MinMaxScaler().fit_transform(x.T).T  ==  (x - rowMin)/(rowMax-rowMin)
+    scale_minmax <- function(x) {
+      mn  <- apply(x, 1, min)
+      mx  <- apply(x, 1, max)
+      rng <- mx - mn
+      rng_safe <- rng; rng_safe[rng_safe == 0] <- 1
+      x <- sweep(x, 1, mn, "-")
+      x <- sweep(x, 1, rng_safe, "/")
+      if (any(rng == 0)) x[rng == 0, ] <- 0   # constant rows -> 0 (matches sklearn)
+      x
     }
-
-    test_min <- apply(test_x, 1, min)
-    test_max <- apply(test_x, 1, max)
-    test_rng <- test_max - test_min
-    test_rng_safe <- test_rng
-    test_rng_safe[test_rng_safe == 0] <- 1
-    test_x <- sweep(test_x, 1, test_min, "-")
-    test_x <- sweep(test_x, 1, test_rng_safe, "/")
-    if (any(test_rng == 0)) {
-      test_x[test_rng == 0, ] <- 0
-    }
-
+    train_x <- scale_minmax(train_x)
+    test_x  <- scale_minmax(test_x)
+ 
   } else if (scaler == "ss") {
-    train_mean <- rowMeans(train_x)
-    train_sd <- apply(train_x, 1, sd)
-    train_sd_safe <- train_sd
-    train_sd_safe[train_sd_safe == 0] <- 1
-    train_x <- sweep(train_x, 1, train_mean, "-")
-    train_x <- sweep(train_x, 1, train_sd_safe, "/")
-    if (any(train_sd == 0)) {
-      train_x[train_sd == 0, ] <- 0
+    # sklearn StandardScaler().fit_transform(x.T).T  ==  (x - rowMean)/popSD
+    # popSD divides by n (ddof = 0); base-R sd() (ddof = 1) is NOT used.
+    scale_standard <- function(x) {
+      mu  <- rowMeans(x)
+      sdv <- sqrt(rowMeans((x - mu)^2))        # population std, ddof = 0
+      sd_safe <- sdv; sd_safe[sd_safe == 0] <- 1
+      x <- sweep(x, 1, mu, "-")
+      x <- sweep(x, 1, sd_safe, "/")
+      if (any(sdv == 0)) x[sdv == 0, ] <- 0    # constant rows -> 0 (matches sklearn)
+      x
     }
-
-    test_mean <- rowMeans(test_x)
-    test_sd <- apply(test_x, 1, sd)
-    test_sd_safe <- test_sd
-    test_sd_safe[test_sd_safe == 0] <- 1
-    test_x <- sweep(test_x, 1, test_mean, "-")
-    test_x <- sweep(test_x, 1, test_sd_safe, "/")
-    if (any(test_sd == 0)) {
-      test_x[test_sd == 0, ] <- 0
-    }
+    train_x <- scale_standard(train_x)
+    test_x  <- scale_standard(test_x)
+ 
+  } else {
+    stop("`scaler` must be 'mms' or 'ss'.")
   }
-
+ 
   tape_log("Processing finished", start_time = proc_start)
-
+ 
   list(
-    train_x = train_x,
-    train_y = as.matrix(train_y),
-    test_x = test_x,
-    genename = genename,
-    celltypes = celltypes,
+    train_x    = train_x,
+    train_y    = as.matrix(train_y),
+    test_x     = test_x,
+    genename   = genename,
+    celltypes  = celltypes,
     samplename = samplename
   )
 }
+
 
 
 
