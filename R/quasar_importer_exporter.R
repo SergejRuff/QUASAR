@@ -723,14 +723,52 @@ quasar_h5_write_column <- function(fid, path, x) {
 }
 
 quasar_h5_write_dataframe <- function(fid, path, df, index) {
+  df <- as.data.frame(df, check.names = FALSE)
+
+  # "_index" is reserved by AnnData for dataframe row names.
+  if ("_index" %in% colnames(df)) {
+    new_name <- make.unique(
+      c(colnames(df), "_index_metadata")
+    )[ncol(df) + 1L]
+
+    warning(
+      "Metadata column '_index' in '", path,
+      "' is reserved by AnnData and was renamed to '",
+      new_name, "'.",
+      call. = FALSE
+    )
+
+    colnames(df)[colnames(df) == "_index"] <- new_name
+  }
+
   rhdf5::h5createGroup(fid, path)
+
+  quasar_h5_write_string_array(
+    fid,
+    paste0(path, "/_index"),
+    as.character(index)
+  )
+
   cols <- colnames(df)
-  quasar_h5_write_string_array(fid, paste0(path, "/_index"), as.character(index))
-  for (cn in cols) quasar_h5_write_column(fid, paste0(path, "/", cn), df[[cn]])
-  quasar_h5_attr(fid, path, list(`encoding-type`    = "dataframe",
-                                 `encoding-version` = "0.2.0",
-                                 `_index`           = "_index",
-                                 `column-order`     = as.character(cols)))
+
+  for (cn in cols) {
+    quasar_h5_write_column(
+      fid,
+      paste0(path, "/", cn),
+      df[[cn]]
+    )
+  }
+
+  quasar_h5_attr(
+    fid,
+    path,
+    list(
+      `encoding-type` = "dataframe",
+      `encoding-version` = "0.2.0",
+      `_index` = "_index",
+      `column-order` = as.character(cols)
+    )
+  )
 }
 
 quasar_h5_write_ints <- function(fid, path, x) {
