@@ -24,6 +24,8 @@ Imports:
     matrixStats,
     MCMCpack,
     methods,
+    rhdf5,
+    S4Vectors,
     SeuratObject,
     SingleCellExperiment,
     SummarizedExperiment,
