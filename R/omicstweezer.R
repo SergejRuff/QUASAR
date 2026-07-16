@@ -499,12 +499,12 @@ omics_process <- function(simudata, real_bulk,
   ot_log("Variance filtering", start_time = proc_start)
   train_var    <- apply(train_x, 2, var)
   cutoff_train <- sort(train_var, decreasing = TRUE)[
-    as.integer(ncol(train_x) * variance_threshold)]
+    as.integer(ncol(train_x) * variance_threshold)+ 1L]
   train_x <- train_x[, train_var > cutoff_train, drop = FALSE]
 
   test_var    <- apply(test_x, 2, var)
   cutoff_test <- sort(test_var, decreasing = TRUE)[
-    as.integer(ncol(test_x) * variance_threshold)]
+    as.integer(ncol(test_x) * variance_threshold)+ 1L]
   test_x <- test_x[, test_var > cutoff_test, drop = FALSE]
 
   inter   <- intersect(colnames(train_x), colnames(test_x))
