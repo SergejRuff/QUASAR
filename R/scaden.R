@@ -1,107 +1,57 @@
 #' Simulate pseudobulk training data for Scaden
 #'
-#' Generates artificial pseudobulk samples from single-cell reference data and
-#' returns them in a format directly compatible with [scaden()].
-#'
-#' The function accepts `Seurat`, `SingleCellExperiment`, base matrices,
-#' `data.frame`s, and sparse `Matrix` objects. Counts are sampled with
+#' Faithful port of `generate_simulated_data()`. Counts are sampled with
 #' replacement within each cell type according to Dirichlet-generated mixture
-#' proportions. Optional sparse and rare-cell perturbations can be applied to
-#' mimic more heterogeneous compositions.
+#' proportions. Optionally merges a set of cell types into a single unknown
+#' class, following Scaden's post-simulation merge semantics.
 #'
-#' @param sc_data A single-cell reference object. Supported inputs are a
-#'   `Seurat` object, a `SingleCellExperiment` object, a matrix, a
-#'   `data.frame`, or a sparse `Matrix`.
-#' @param metadata Optional metadata for matrix-like input. Must contain the
-#'   column specified by `celltype_col` when supplied.
-#' @param celltypes Optional character vector of cell-type labels for matrix-like
-#'   input. Used only when `metadata` is not supplied.
-#' @param celltype_col Character scalar giving the metadata column that contains
-#'   cell-type labels. Must be provided for `Seurat`, `SingleCellExperiment`,
-#'   or matrix input with `metadata`.
-#' @param assay Character scalar giving the assay name to extract from a
-#'   `Seurat` object.
-#' @param slot Character scalar giving the assay slot or assay name to extract.
-#'   For `Seurat`, this is interpreted as a slot within `assay`. For
-#'   `SingleCellExperiment`, this is interpreted as an assay name.
-#' @param d_prior Optional numeric vector of Dirichlet concentration parameters.
-#'   If `NULL`, a symmetric Dirichlet prior of ones is used.
-#' @param n Integer scalar. Target number of single cells per simulated
-#'   pseudobulk before rounding to integer cell counts.
-#' @param samplenum Integer scalar. Number of pseudobulk samples to generate.
-#' @param seed Optional integer scalar used to control reproducible simulation.
-#' @param sparse Logical scalar. If `TRUE`, a subset of simulated samples is
-#'   forced to contain zero fractions for a subset of cell types.
-#' @param sparse_prob Numeric scalar in `[0, 1)`. Controls both the proportion
-#'   of sparse samples and the proportion of cell types zeroed within those
+#' @param sc_data A `Seurat`, `SingleCellExperiment`, matrix, `data.frame`, or
+#'   sparse `Matrix` reference.
+#' @param metadata Optional metadata for matrix-like input.
+#' @param celltypes Optional character vector of cell-type labels for
+#'   matrix-like input. Used only when `metadata` is not supplied.
+#' @param celltype_col Character scalar giving the metadata column holding
+#'   cell-type labels.
+#' @param assay Character scalar giving the Seurat assay name.
+#' @param slot Character scalar giving the assay slot/layer (Seurat) or assay
+#'   name (SingleCellExperiment).
+#' @param d_prior Optional numeric vector of Dirichlet concentration
+#'   parameters. If `NULL`, a symmetric prior of ones is used. Length must equal
+#'   the number of cell types *before* unknown merging.
+#' @param n Integer scalar. Target cells per pseudobulk before flooring.
+#' @param samplenum Integer scalar. Number of pseudobulks to generate.
+#' @param seed Optional integer scalar for reproducible simulation.
+#' @param sparse Logical scalar. Zero out a subset of cell types in a subset of
 #'   samples.
-#' @param rare Logical scalar. If `TRUE`, a subset of cell types is perturbed to
-#'   have very small fractions in a subset of samples.
-#' @param rare_percentage Numeric scalar in `[0, 1]`. Fraction of cell types to
-#'   treat as rare when `rare = TRUE`.
-#' @param unknown_celltypes Character vector of cell-type labels that should be
-#'   merged into a single unknown class before simulation.
-#' @param unknown_label Character scalar used as the merged label for unknown
-#'   cell types.
-#' @param select_ct Optional character vector restricting simulation to a subset
-#'   of cell types after unknown-cell merging.
-#' @param verbose Logical scalar. If `TRUE`, prints progress information and
-#'   elapsed time.
+#' @param sparse_prob Numeric scalar in `[0, 1)`. Controls both the proportion
+#'   of sparse samples and the proportion of cell types zeroed within them.
+#' @param rare Logical scalar. Perturb a subset of cell types to very small
+#'   fractions in a subset of samples.
+#' @param rare_percentage Numeric scalar in `[0, 1]`. Fraction of cell types
+#'   treated as rare when `rare = TRUE`.
+#' @param unknown_celltypes Character vector of cell-type labels to merge into a
+#'   single unknown class. Defaults to `character(0)` (no merging).
+#' @param unknown_label Character scalar used as the merged label.
+#' @param verbose Logical scalar. Print progress.
 #'
-#' @return A named list with components:
-#' \describe{
-#'   \item{train_x}{Numeric matrix with samples in rows and genes in columns.
-#'   This is the training input expected by [scaden()].}
-#'   \item{train_y}{Numeric matrix with samples in rows and cell types in
-#'   columns. This is the training target expected by [scaden()].}
-#'   \item{cell_num}{Integer matrix giving realized sampled cell counts per
-#'   sample and cell type.}
-#'   \item{celltypes}{Character vector of cell-type names used in the
-#'   simulation.}
-#'   \item{genes}{Character vector of gene names.}
-#'   \item{elapsed}{Character scalar giving total runtime in `HH:MM:SS`
-#'   format.}
-#'   \item{settings}{List of simulation settings used to generate the output.}
-#' }
+#' @return A named list with `train_x` (samples x genes), `train_y`
+#'   (samples x cell types), `cell_num`, `celltypes`, `genes`, `elapsed`, and
+#'   `settings`.
 #'
 #' @details
-#' The output is structured to plug directly into [scaden_process()] and
-#' [scaden()]. In particular, `train_x` is returned as a samples x genes matrix
-#' and `train_y` as a samples x cell-types matrix.
+#' Unknown merging happens **after** simulation: each original cell type gets
+#' its own Dirichlet component and is sampled independently, and the proportion
+#' columns of the unknown types are then summed into one column. This mirrors
+#' Scaden's `y.groupby(y.columns, axis=1).sum()` and differs from relabelling
+#' cells before simulation, which would give the merged class a single Dirichlet
+#' component and pool its cells uniformly.
 #'
-#' @importFrom methods slot slotNames
+#' @importFrom methods slot slotNames as
 #' @importFrom SummarizedExperiment assay assayNames colData
-#' @importFrom Matrix Matrix sparseMatrix
+#' @importFrom Matrix sparseMatrix
 #' @importFrom MCMCpack rdirichlet
 #' @importFrom stats runif
-#'
-#' @examples
-#' set.seed(1)
-#' n_genes        <- 1000
-#' cell_types     <- c("Tcell", "Bcell", "Mono")
-#' cells_per_type <- 100
-#' n_cells        <- length(cell_types) * cells_per_type
-#'
-#' counts <- matrix(
-#'   rpois(n_genes * n_cells, lambda = 5),
-#'   nrow = n_genes, ncol = n_cells
-#' )
-#' rownames(counts) <- paste0("gene", seq_len(n_genes))
-#' colnames(counts) <- paste0("cell", seq_len(n_cells))
-#'
-#' meta <- data.frame(
-#'   cell_type = rep(cell_types, each = cells_per_type),
-#'   row.names = colnames(counts)
-#' )
-#' sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
-#'
-#' ## Simulate training pseudobulks (samples x genes) ------------------------
-#' train_sim <- scaden_sim_pb(
-#'   sc, celltype_col = "cell_type",
-#'   samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
-#' )
-#' 
-#' print(head(train_sim$train_x))
+#' @importFrom utils flush.console
 #'
 #' @export
 scaden_sim_pb <- function(
@@ -119,21 +69,17 @@ scaden_sim_pb <- function(
   sparse_prob = 0.5,
   rare = FALSE,
   rare_percentage = 0.4,
-  unknown_celltypes = "unknown",
+  unknown_celltypes = character(0),
   unknown_label = "Unknown",
-  select_ct = NULL,
   verbose = TRUE
 ) {
- 
 
- 
   start_time <- Sys.time()
- 
+
   fmt_time <- function() {
     secs <- max(0L, as.integer(round(difftime(Sys.time(), start_time, units = "secs"))))
     sprintf("%02d:%02d:%02d", secs %/% 3600L, (secs %% 3600L) %/% 60L, secs %% 60L)
   }
- 
 
   draw_progress <- function(done, total, width = 32L) {
     frac  <- if (total > 0L) min(1, done / total) else 1
@@ -145,23 +91,22 @@ scaden_sim_pb <- function(
                 done, total, fmt_time()))
     utils::flush.console()
   }
- 
+
   require_celltype_col <- function(meta) {
     if (is.null(celltype_col) || !nzchar(celltype_col))
       stop("`celltype_col` must be provided explicitly.")
     if (!celltype_col %in% colnames(meta))
       stop(sprintf("`celltype_col` '%s' not found in metadata.", celltype_col))
   }
- 
 
   if (!is.null(seed)) {
-    stopifnot("`seed` must be a single finite number" = length(seed) == 1L && is.finite(seed))
+    stopifnot("`seed` must be a single finite number" =
+                length(seed) == 1L && is.finite(seed))
     set.seed(as.integer(seed))
   }
- 
-  # Print immediately so the user sees activity during reference extraction.
+
   if (verbose) cat("Simulating pseudobulks for Scaden ...\n")
- 
+
 
   if (inherits(sc_data, "Seurat")) {
     stopifnot("Seurat object missing requested assay" = assay %in% names(sc_data@assays))
@@ -175,7 +120,7 @@ scaden_sim_pb <- function(
     meta   <- sc_data@meta.data
     require_celltype_col(meta)
     cell_types <- as.character(meta[[celltype_col]])
- 
+
   } else if (inherits(sc_data, "SingleCellExperiment")) {
     avail <- SummarizedExperiment::assayNames(sc_data)
     stopifnot("Assay not found in SCE object" = slot %in% avail)
@@ -183,15 +128,14 @@ scaden_sim_pb <- function(
     meta   <- as.data.frame(SummarizedExperiment::colData(sc_data))
     require_celltype_col(meta)
     cell_types <- as.character(meta[[celltype_col]])
- 
+
   } else if (is.matrix(sc_data) || is.data.frame(sc_data) || inherits(sc_data, "Matrix")) {
     x <- if (is.data.frame(sc_data)) as.matrix(sc_data) else sc_data
- 
+
     if (!is.null(metadata)) {
       metadata <- as.data.frame(metadata)
       require_celltype_col(metadata)
       ct_vec <- as.character(metadata[[celltype_col]])
- 
       if (ncol(x) == nrow(metadata)) {
         counts <- x
       } else if (nrow(x) == nrow(metadata)) {
@@ -200,7 +144,7 @@ scaden_sim_pb <- function(
         stop("Dimensions of `sc_data` and `metadata` do not match.")
       }
       cell_types <- ct_vec
- 
+
     } else if (!is.null(celltypes)) {
       if (length(celltypes) == ncol(x)) {
         counts <- x
@@ -210,85 +154,88 @@ scaden_sim_pb <- function(
         stop("Length of `celltypes` does not match rows or columns of `sc_data`.")
       }
       cell_types <- as.character(celltypes)
- 
+
     } else {
       stop("For matrix input, provide either `metadata` + `celltype_col` or `celltypes`.")
     }
- 
+
   } else {
-    stop("Unsupported `sc_data` type. Expected Seurat, SingleCellExperiment, matrix, data.frame, or Matrix.")
+    stop("Unsupported `sc_data` type. Expected Seurat, SingleCellExperiment, ",
+         "matrix, data.frame, or Matrix.")
   }
- 
 
   counts <- methods::as(counts, "CsparseMatrix")
   if (is.null(rownames(counts))) rownames(counts) <- paste0("gene_", seq_len(nrow(counts)))
   if (is.null(colnames(counts))) colnames(counts) <- paste0("cell_", seq_len(ncol(counts)))
-  cell_types <- gsub("/", "_", cell_types)
-  stopifnot("Cell-type vector length != number of cells" = length(cell_types) == ncol(counts))
- 
-  # -- Apply unknown / select filters ----------------------------------------
- 
-  if (length(unknown_celltypes) > 0L)
-    cell_types[cell_types %in% unknown_celltypes] <- unknown_label
- 
-  if (!is.null(select_ct)) {
-    keep <- cell_types %in% select_ct
-    if (!any(keep)) stop("No cells found for `select_ct`.")
-    counts     <- counts[, keep, drop = FALSE]
-    cell_types <- cell_types[keep]
-  }
- 
-  ct_levels  <- sort(unique(cell_types))
-  n_ct       <- length(ct_levels)
-  if (n_ct < 1L) stop("No cell types available after filtering.")
- 
+  stopifnot("Cell-type vector length != number of cells" =
+              length(cell_types) == ncol(counts))
 
-  stopifnot("`n` must be a positive number"         = is.numeric(n)         && length(n) == 1L         && n > 0,
-            "`samplenum` must be a positive number"  = is.numeric(samplenum) && length(samplenum) == 1L && samplenum > 0)
+
+  na_cells <- which(is.na(cell_types))
+  if (length(na_cells) > 0L) {
+    counts     <- counts[, -na_cells, drop = FALSE]
+    cell_types <- cell_types[-na_cells]
+  }
+
+
+  ct_levels <- sort(unique(cell_types), method = "radix")
+  n_ct      <- length(ct_levels)
+  if (n_ct < 1L) stop("No cell types available.")
+
+  stopifnot(
+    "`n` must be a positive number"         = is.numeric(n) && length(n) == 1L && n > 0,
+    "`samplenum` must be a positive number" = is.numeric(samplenum) && length(samplenum) == 1L && samplenum > 0
+  )
   n         <- as.integer(n)
   samplenum <- as.integer(samplenum)
- 
+
   if (is.null(d_prior)) {
     d_prior <- rep(1, n_ct)
   } else {
-    stopifnot("`d_prior` length must equal number of cell types" = length(d_prior) == n_ct,
-              "All `d_prior` entries must be > 0"                = all(d_prior > 0))
+    stopifnot(
+      "`d_prior` length must equal number of cell types" = length(d_prior) == n_ct,
+      "All `d_prior` entries must be > 0"                = all(d_prior > 0)
+    )
   }
   if (sparse) stopifnot("`sparse_prob` must be in [0, 1)" = sparse_prob >= 0 && sparse_prob < 1)
   if (rare)   stopifnot("`rare_percentage` must be in [0, 1]" = rare_percentage >= 0 && rare_percentage <= 1)
- 
+
+  unknown_celltypes <- as.character(unknown_celltypes)
+  stopifnot("`unknown_label` must be a single string" =
+              is.character(unknown_label) && length(unknown_label) == 1L)
+
   if (verbose)
     cat(sprintf("  Reference: %d cells | %d genes | %d cell types | %d pseudobulks\n",
                 ncol(counts), nrow(counts), n_ct, samplenum))
- 
-  
- 
+
+
   prop <- MCMCpack::rdirichlet(samplenum, d_prior)
   prop <- prop / rowSums(prop)
- 
- 
- 
+
+
   if (sparse) {
     n_sparse <- as.integer(samplenum * sparse_prob)
+    # The min() clamp has no Python counterpart but can never bind:
+    # int(K * 0.5) <= K - 1 for all K >= 2.
     n_zero   <- min(as.integer(n_ct * sparse_prob), n_ct - 1L)
     if (n_sparse > 0L && n_zero > 0L) {
       for (i in seq_len(n_sparse)) {
         prop[i, sample.int(n_ct, n_zero)] <- 0
       }
-      rs <- rowSums(prop); rs[rs == 0] <- 1
-      prop <- prop / rs
+      prop <- prop / rowSums(prop)
     }
   }
- 
- 
- 
+
+
+
   if (rare) {
     n_rare_ct <- as.integer(n_ct * rare_percentage)
     if (n_rare_ct > 0L) {
-      set.seed(0L)
+      set.seed(0L)   # Python hard-codes np.random.seed(0) here
       rare_idx <- sample.int(n_ct, n_rare_ct)
       prop     <- prop / rowSums(prop)
-      n_rows   <- min(as.integer(0.5 * samplenum) + as.integer(rare_percentage * 0.5 * samplenum),
+      n_rows   <- min(as.integer(0.5 * samplenum) +
+                        as.integer(as.integer(rare_percentage * 0.5 * samplenum)),
                       samplenum)
       for (i in seq_len(n_rows)) {
         buf <- stats::runif(n_rare_ct, 0, 0.03)
@@ -299,93 +246,117 @@ scaden_sim_pb <- function(
       }
     }
   }
- 
-  
- 
+
+  # -- Cell counts and realized proportions -----------------------------------
+
   cell_num <- matrix(as.integer(floor(n * prop)),
                      nrow = samplenum, ncol = n_ct,
                      dimnames = list(NULL, ct_levels))
- 
-  # Guarantee at least one cell per sample
+
+  # No Python counterpart, and provably inert: rows of `prop` sum to 1, so
+  # max(prop[i, ]) >= 1/n_ct, and floor(n * prop) can only be all-zero if every
+  # proportion is < 1/n -- impossible for n_ct <= n.
   empty <- rowSums(cell_num) == 0L
   if (any(empty)) {
     best_col <- max.col(prop[empty, , drop = FALSE], ties.method = "first")
     for (ii in seq_along(best_col)) cell_num[which(empty)[ii], best_col[ii]] <- 1L
   }
- 
-  prop_realized <- cell_num / rowSums(cell_num)
- 
 
- 
-  ct_indices <- split(seq_along(cell_types), cell_types)[ct_levels]
- 
+  prop_realized <- cell_num / rowSums(cell_num)
+  colnames(prop_realized) <- ct_levels
+
+  # -- Sample cells -----------------------------------------------------------
+
+  ct_indices <- split(seq_along(cell_types), factor(cell_types, levels = ct_levels))
+
   ids_all <- vector("list", n_ct)
   grp_all <- vector("list", n_ct)
- 
+
   for (k in seq_along(ct_levels)) {
     total_k <- sum(cell_num[, k])
-    if (total_k > 0L && length(ct_indices[[k]]) > 0L) {
-      ids_all[[k]] <- sample(ct_indices[[k]], total_k, replace = TRUE)
+    pool    <- ct_indices[[k]]
+    if (total_k > 0L && length(pool) > 0L) {
+      # Index into `pool` rather than calling sample(pool, ...) directly:
+      # sample() on a length-1 numeric silently means sample.int(pool).
+      ids_all[[k]] <- pool[sample.int(length(pool), total_k, replace = TRUE)]
       grp_all[[k]] <- rep.int(seq_len(samplenum), times = cell_num[, k])
     }
   }
- 
+
   ids <- unlist(ids_all, use.names = FALSE)
   grp <- unlist(grp_all, use.names = FALSE)
- 
 
   S <- Matrix::sparseMatrix(i = ids, j = grp, x = 1,
                             dims = c(ncol(counts), samplenum))
- 
-  # -- Build pseudobulks in sample blocks (this is the real work) -------------
- 
+
   gene_names   <- rownames(counts)
   sample_names <- paste0("sample_", seq_len(samplenum))
- 
-  # Pre-allocate the final samples x genes matrix and fill it directly,
-  # avoiding a full dense `bulk` plus its transpose (lower peak memory).
+
   train_x <- matrix(0, nrow = samplenum, ncol = nrow(counts),
                     dimnames = list(sample_names, gene_names))
- 
-  block_size <- max(1L, ceiling(samplenum / 100L))   
+
+  block_size <- max(1L, ceiling(samplenum / 100L))
   starts     <- seq.int(1L, samplenum, by = block_size)
- 
+
   if (verbose) {
     cat("  Generating pseudobulks:\n")
     draw_progress(0L, samplenum)
   }
- 
+
   for (s0 in starts) {
     cols  <- s0:min(s0 + block_size - 1L, samplenum)
-    # Small dense block (genes x |cols|); never a large sparse->dense coercion.
     block <- as.matrix(counts %*% S[, cols, drop = FALSE])
     train_x[cols, ] <- t(block)
     if (verbose) draw_progress(cols[length(cols)], samplenum)
   }
- 
-  if (verbose) cat("\n")
- 
 
- 
-  train_y <- prop_realized                          # samples x cell types
-  rownames(train_y) <- sample_names
-  colnames(train_y) <- ct_levels
- 
+  if (verbose) cat("\n")
+
+  train_y <- prop_realized
+
+  # -- Merge unknown cell types (post-simulation, as in Scaden) ---------------
+
+  if (length(unknown_celltypes) > 0L) {
+    hit <- ct_levels %in% unknown_celltypes
+    if (any(hit)) {
+      new_names <- ct_levels
+      new_names[hit] <- unknown_label
+
+      if (unknown_label %in% ct_levels[!hit])
+        warning(sprintf(
+          "`unknown_label` '%s' is also an existing cell type; it will be merged too.",
+          unknown_label))
+
+      # pandas groupby(axis=1).sum() sorts the resulting columns.
+      grp_ct  <- factor(new_names, levels = sort(unique(new_names), method = "radix"))
+      train_y  <- t(rowsum(t(train_y),  grp_ct, reorder = TRUE))
+      cell_num <- t(rowsum(t(cell_num), grp_ct, reorder = TRUE))
+      ct_levels <- levels(grp_ct)
+
+      if (verbose)
+        cat(sprintf("  Merged %d cell type(s) into '%s' (%d cell types remain)\n",
+                    sum(hit), unknown_label, length(ct_levels)))
+    }
+  }
+
+  rownames(train_y)  <- sample_names
+  colnames(train_y)  <- ct_levels
+  rownames(cell_num) <- sample_names
+  colnames(cell_num) <- ct_levels
+
   elapsed <- fmt_time()
   if (verbose)
     cat(sprintf("  Done in %s  (%d pseudobulks, %d cell types)\n",
-                elapsed, samplenum, n_ct))
- 
+                elapsed, samplenum, length(ct_levels)))
 
- 
   list(
-    train_x                  = train_x,
-    train_y                  = train_y,
-    cell_num                 = cell_num,
-    celltypes                = ct_levels,
-    genes                    = gene_names,
-    elapsed                  = elapsed,
-    settings = list(
+    train_x   = train_x,
+    train_y   = train_y,
+    cell_num  = cell_num,
+    celltypes = ct_levels,
+    genes     = gene_names,
+    elapsed   = elapsed,
+    settings  = list(
       d_prior           = d_prior,
       n                 = n,
       samplenum         = samplenum,
@@ -396,7 +367,6 @@ scaden_sim_pb <- function(
       rare_percentage   = rare_percentage,
       unknown_celltypes = unknown_celltypes,
       unknown_label     = unknown_label,
-      select_ct         = select_ct,
       assay             = assay,
       slot              = slot,
       celltype_col      = celltype_col
@@ -405,180 +375,133 @@ scaden_sim_pb <- function(
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #' Process simulated and bulk data for Scaden
 #'
-#' Aligns simulated pseudobulk training data with optional bulk test data,
-#' filters genes, applies normalization, and returns matrices ready for
-#' [scaden()] and [scaden_predict()].
+#' Aligns simulated pseudobulk training data with real bulk data, filters genes,
+#' log-transforms, and applies per-sample scaling. Two gene-filtering strategies
+#' are available via `mode`.
 #'
-#' @param sim_data A list returned by [scaden_sim_pb()]. Must contain at least
-#'   `train_x` and `train_y`.
-#' @param bulk_data Optional bulk expression matrix or `data.frame`. Gene names
-#'   must be present in either row names or column names. The function will
-#'   infer orientation and convert the matrix to samples x genes.
-#' @param var_cutoff Numeric scalar. Genes in `bulk_data` with variance less
-#'   than or equal to this threshold are removed before intersecting with the
-#'   simulated training genes.
-#' @param top_var_genes Optional integer scalar. If provided, only the top most
-#'   variable genes in `bulk_data` are kept after applying `var_cutoff`.
-#' @param normalize_train Character scalar specifying the transformation applied
-#'   to the training matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.
-#' @param normalize_test Character scalar specifying the transformation applied
-#'   to the test matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.
-#' @param verbose Logical scalar. If `TRUE`, prints progress messages and
-#'   elapsed time.
+#' @param sim_data A list returned by [scaden_sim_pb()], with `train_x` and
+#'   `train_y`.
+#' @param bulk_data Bulk expression matrix or `data.frame`. Gene names must
+#'   appear in row or column names; orientation is inferred.
+#' @param mode Character scalar. `"tape"` (default) reproduces TAPE's
+#'   `ProcessInputData`; `"scaden"` reproduces original Scaden's preprocessing.
+#' @param variance_threshold Numeric scalar in `[0, 1)`. `mode = "tape"` only.
+#'   Fraction of genes defining the variance cutoff, applied separately to each
+#'   matrix.
+#' @param scaler Character scalar. `mode = "tape"` only. `"mms"` for per-sample
+#'   min-max, `"ss"` for per-sample standardization.
+#' @param var_cutoff Numeric scalar. `mode = "scaden"` only. Genes in
+#'   `bulk_data` with variance at or below this value are dropped. Set to `NULL`
+#'   to skip.
+#' @param top_var_genes Optional integer scalar. `mode = "scaden"` only. Keep
+#'   only the most variable genes after `var_cutoff`.
+#' @param verbose Logical scalar. Print progress.
 #'
-#' @return A named list with components:
-#' \describe{
-#'   \item{train_x}{Processed training matrix with samples in rows and genes in
-#'   columns.}
-#'   \item{train_y}{Training target matrix with samples in rows and cell types
-#'   in columns.}
-#'   \item{test_x}{Processed bulk test matrix with samples in rows and genes in
-#'   columns, or `NULL` if `bulk_data` was not provided.}
-#'   \item{genes}{Character vector of genes retained after filtering and
-#'   intersection.}
-#'   \item{train_samples}{Character vector of training sample names.}
-#'   \item{test_samples}{Character vector of test sample names, or `NULL`.}
-#'   \item{celltypes}{Character vector of cell-type names.}
-#'   \item{normalize_train}{Training normalization method used.}
-#'   \item{normalize_test}{Test normalization method used.}
-#'   \item{elapsed}{Character scalar giving total runtime in `HH:MM:SS`
-#'   format.}
-#' }
+#' @return A named list with `train_x`, `train_y`, `test_x`, `genename`,
+#'   `celltypes`, `samplename`, `mode`, and `elapsed`.
 #'
 #' @details
-#' The processing logic follows the Scaden-style setup where the simulated
-#' training matrix and real bulk matrix are restricted to a shared gene set.
-#' Optionally, genes can first be filtered by variance on the bulk data.
+#' The two modes differ only in gene filtering and scaler choice:
 #'
-#' @importFrom matrixStats rowMins rowMaxs colVars
+#' \describe{
+#'   \item{`"tape"`}{Top-quantile variance cutoff applied to **both** matrices,
+#'   then intersect. `log(x + 1)`, then `mms` or `ss`.}
+#'   \item{`"scaden"`}{Absolute variance cutoff applied to the **bulk matrix
+#'   only**, then intersect with the training genes. `log2(x + 1)`, then
+#'   per-sample min-max (`log_min_max`); `scaler` is ignored.}
+#' }
 #'
-#' @examples
-#' ## Build a tiny single-cell reference (genes x cells) ---------------------
-#' set.seed(1)
-#' n_genes        <- 1000
-#' cell_types     <- c("Tcell", "Bcell", "Mono")
-#' cells_per_type <- 100
-#' n_cells        <- length(cell_types) * cells_per_type
+#' The log base is in fact immaterial: both scalers are invariant to
+#' multiplication by a positive constant, so `log2` and `log` give identical
+#' output up to floating-point rounding. The bases are kept literal to their
+#' respective sources.
 #'
-#' counts <- matrix(
-#'   rpois(n_genes * n_cells, lambda = 5),
-#'   nrow = n_genes, ncol = n_cells
-#' )
-#' rownames(counts) <- paste0("gene", seq_len(n_genes))
-#' colnames(counts) <- paste0("cell", seq_len(n_cells))
+#' Both scalers operate per sample (`fit_transform(x.T).T` in sklearn), use
+#' population statistics (`ddof = 0`), and map constant samples to exactly zero,
+#' matching sklearn's `_handle_zeros_in_scale`. The `"tape"` variance filter uses
+#' `ddof = 1` to match `pandas.DataFrame.var`.
 #'
-#' meta <- data.frame(
-#'   cell_type = rep(cell_types, each = cells_per_type),
-#'   row.names = colnames(counts)
-#' )
-#' sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
-#'
-#' ## Simulate training pseudobulks (samples x genes) ------------------------
-#' train_sim <- scaden_sim_pb(
-#'   sc, celltype_col = "cell_type",
-#'   samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
-#' )
-#'
-#' ## Simulate a separate set to stand in for the real bulk ------------------
-#' test_sim <- scaden_sim_pb(
-#'   sc, celltype_col = "cell_type",
-#'   samplenum = 10, n = 100, sparse = FALSE, seed = 2, verbose = FALSE
-#' )
-#' real_bulk <- t(test_sim$train_x)   # scaden_process expects genes x samples
-#'
-#' ## Variance filter, gene intersection, log2 + per-sample min-max ----------
-#' proc <- scaden_process(train_sim, bulk_data = real_bulk)
-#' print(str(proc$train_x))
-#' print(str(proc$test_x))
+#' @importFrom matrixStats colVars rowMins rowMaxs
+#' @importFrom stats setNames
 #'
 #' @export
 scaden_process <- function(sim_data,
-  bulk_data = NULL,
-  var_cutoff = 0.1,
-  top_var_genes = NULL,
-  normalize_train = c("log2_minmax", "log2", "none"),
-  normalize_test  = c("log2_minmax", "log2", "none"),
-  verbose = TRUE) {
+                           bulk_data,
+                           mode = c("tape", "scaden"),
+                           variance_threshold = 0.98,
+                           scaler = c("mms", "ss"),
+                           var_cutoff = 0.1,
+                           top_var_genes = NULL,
+                           verbose = TRUE) {
 
-  normalize_train <- match.arg(normalize_train)
-  normalize_test  <- match.arg(normalize_test)
+  mode        <- match.arg(mode)
+  scaler_given <- !missing(scaler)
+  scaler      <- match.arg(scaler)
+  start_time  <- Sys.time()
 
-  start_time <- Sys.time()
-
-  # -- Local helpers ----------------------------------------------------------
+  if (identical(mode, "scaden")) {
+    if (scaler_given && !identical(scaler, "mms"))
+      warning("Original Scaden offers only `log_min_max`; `scaler` is ignored ",
+              "when `mode = 'scaden'`.")
+    scaler <- "mms"
+  }
 
   fmt_time <- function() {
     secs <- max(0L, as.integer(round(difftime(Sys.time(), start_time, units = "secs"))))
     sprintf("%02d:%02d:%02d", secs %/% 3600L, (secs %% 3600L) %/% 60L, secs %% 60L)
   }
 
-
-  padn <- function(x, w) formatC(x, width = w)          # right-aligned integer
-
-  normalize <- function(x, method) {
-    if (method == "none") return(x)
-    x <- log2(x + 1)
-    if (method == "log2") return(x)
-    # log1p_minmax: row-wise min-max scaling
-    mins  <- matrixStats::rowMins(x)
-    range <- pmax(matrixStats::rowMaxs(x) - mins, 1e-8)
-    sweep(sweep(x, 1, mins, "-"), 1, range, "/")
-  }
-
   orient_to_samples_x_genes <- function(mat, target_genes, label) {
-    rn <- rownames(mat)
-    cn <- colnames(mat)
+    rn <- rownames(mat); cn <- colnames(mat)
     hit_rows <- if (!is.null(rn)) length(intersect(rn, target_genes)) else 0L
     hit_cols <- if (!is.null(cn)) length(intersect(cn, target_genes)) else 0L
-
-    if (hit_cols > hit_rows) return(mat)            # already samples x genes
-    if (hit_rows > hit_cols) return(t(mat))         # genes x samples -> transpose
-
-    # Tie-break on dimension match
+    if (hit_cols > hit_rows) return(mat)
+    if (hit_rows > hit_cols) return(t(mat))
     if (!is.null(rn) && nrow(mat) == length(target_genes)) return(t(mat))
     if (!is.null(cn) && ncol(mat) == length(target_genes)) return(mat)
-
-    stop(sprintf(
-      "Cannot infer orientation of `%s`. Ensure gene names appear in row or column names.",
-      label
-    ))
+    stop(sprintf(paste0("Cannot infer orientation of `%s`. Ensure gene names ",
+                        "appear in row or column names."), label))
   }
 
-  # -- Validate sim_data ------------------------------------------------------
+  # TAPE: var_cutoff = x.var(axis=0).sort_values(ascending=False)[int(p * ncol)]
+  # The Python index is 0-based, so R needs + 1L.
+  quantile_var_filter <- function(M, label) {
+    idx <- as.integer(ncol(M) * variance_threshold) + 1L
+    if (idx > ncol(M))
+      stop(sprintf("`variance_threshold` too high for %s: index %d exceeds %d genes.",
+                   label, idx, ncol(M)))
+    v <- stats::setNames(matrixStats::colVars(M), colnames(M))  # ddof = 1
+    M[, v > sort(v, decreasing = TRUE)[idx], drop = FALSE]
+  }
+
+
+  row_ss <- function(M) {
+    mu      <- rowMeans(M)
+    sdv     <- sqrt(rowMeans((M - mu)^2))       # ddof = 0
+    sd_safe <- ifelse(sdv == 0, 1, sdv)         # _handle_zeros_in_scale
+    out     <- sweep(sweep(M, 1, mu, "-"), 1, sd_safe, "/")
+    out[sdv == 0, ] <- 0
+    out
+  }
+
+
+  row_mms <- function(M) {
+    mn       <- matrixStats::rowMins(M)
+    rng      <- matrixStats::rowMaxs(M) - mn
+    rng_safe <- ifelse(rng == 0, 1, rng)        # _handle_zeros_in_scale
+    out      <- sweep(sweep(M, 1, mn, "-"), 1, rng_safe, "/")
+    out[rng == 0, ] <- 0
+    out
+  }
+
+  scale_rows <- function(M) if (scaler == "ss") row_ss(M) else row_mms(M)
+
+
 
   if (!is.list(sim_data) || is.null(sim_data$train_x) || is.null(sim_data$train_y))
-    stop("`sim_data` must be a list with `train_x` and `train_y` (output of `scaden_sim_pb()`).")
+    stop("`sim_data` must be a list with `train_x` and `train_y`.")
 
   train_x <- as.matrix(sim_data$train_x)
   train_y <- as.matrix(sim_data$train_y)
@@ -587,122 +510,86 @@ scaden_process <- function(sim_data,
     stop("Training matrix must have gene names as column names.")
   if (is.null(rownames(train_x)))
     rownames(train_x) <- paste0("sample_", seq_len(nrow(train_x)))
-  if (is.null(rownames(train_y)))
-    rownames(train_y) <- rownames(train_x)
+  if (is.null(rownames(train_y))) rownames(train_y) <- rownames(train_x)
   if (is.null(colnames(train_y)))
     colnames(train_y) <- paste0("celltype_", seq_len(ncol(train_y)))
 
-  ns_tr <- nrow(train_x); ng_in <- ncol(train_x); nct <- ncol(train_y)
+  test_x <- orient_to_samples_x_genes(as.matrix(bulk_data), colnames(train_x), "bulk_data")
+  if (is.null(colnames(test_x)))
+    stop("`bulk_data` must have gene names in row or column names.")
+  if (is.null(rownames(test_x)))
+    rownames(test_x) <- paste0("sample_", seq_len(nrow(test_x)))
 
-  # -- Orient + validate bulk (test) data (compute dims before printing) ------
+  if (verbose)
+    cat(sprintf("Processing Scaden data (mode = %s, scaler = %s)\n  train %d x %d | bulk %d x %d\n",
+                mode, scaler, nrow(train_x), ncol(train_x), nrow(test_x), ncol(test_x)))
 
-  genes_keep <- colnames(train_x)
-  test_x     <- NULL
-  have_bulk  <- !is.null(bulk_data)
 
-  if (have_bulk) {
-    bulk_x <- orient_to_samples_x_genes(as.matrix(bulk_data), genes_keep, "bulk_data")
-    if (is.null(colnames(bulk_x)))
-      stop("`bulk_data` must have gene names in row or column names.")
-    if (is.null(rownames(bulk_x)))
-      rownames(bulk_x) <- paste0("sample_", seq_len(nrow(bulk_x)))
-    ns_bk <- nrow(bulk_x); ng_bk <- ncol(bulk_x)
-  }
+  if (identical(mode, "tape")) {
+    # Quantile cutoff applied independently to each matrix.
+    train_x <- quantile_var_filter(train_x, "training data")
+    test_x  <- quantile_var_filter(test_x,  "bulk data")
+    bulk_genes <- colnames(test_x)
 
-  # -- Header (aligned input / bulk block) ------------------------------------
+  } else {
+    # Scaden: absolute cutoff on the bulk matrix only.
+    gene_var <- stats::setNames(matrixStats::colVars(test_x), colnames(test_x))
 
-  ssw <- max(nchar(ns_tr), if (have_bulk) nchar(ns_bk) else 0L)   # sample col width
-  sgw <- max(nchar(ng_in), if (have_bulk) nchar(ng_bk) else 0L)   # gene col width
-
-  if (verbose) cat("Processing Scaden training data\n\n")
-  if (verbose) cat(sprintf("  %-5s %s samples   %s genes   %d cell types\n",
-              "input", padn(ns_tr, ssw), padn(ng_in, sgw), nct))
-  if (have_bulk)
-    if (verbose) cat(sprintf("  %-5s %s samples   %s genes\n",
-                "bulk", padn(ns_bk, ssw), padn(ng_bk, sgw)))
-
-  # -- Gene filtering ---------------------------------------------------------
-
-  if (have_bulk) {
-    do_filter <- !is.null(var_cutoff) || !is.null(top_var_genes)
-
-    # Pre-compute funnel column widths so every row lines up.
-    flabels <- character(0)
-    if (!is.null(var_cutoff))    flabels <- c(flabels, sprintf("variance > %g", var_cutoff))
-    if (!is.null(top_var_genes)) flabels <- c(flabels, "top variable genes")
-    flabels <- c(flabels, "shared with training")
-    lw <- max(nchar(flabels))            # label width
-    nw <- nchar(ng_bk)                   # number width (counts only shrink)
-
-    frow <- function(label, before, after)
-      if (verbose) cat(sprintf("    %-*s %s \u2192 %s\n", lw, label, padn(before, nw), padn(after, nw)))
-
-    if (do_filter) {
-      if (verbose) cat("\n  gene filtering\n")
-      gene_var <- setNames(matrixStats::colVars(bulk_x), colnames(bulk_x))
-
-      if (!is.null(var_cutoff)) {
-        before   <- length(gene_var)
-        gene_var <- gene_var[gene_var > var_cutoff]
-        frow(sprintf("variance > %g", var_cutoff), before, length(gene_var))
-      }
-      if (!is.null(top_var_genes) && length(gene_var) > 0L) {
-        before   <- length(gene_var)
-        top_n    <- min(as.integer(top_var_genes), length(gene_var))
-        gene_var <- sort(gene_var, decreasing = TRUE)[seq_len(top_n)]
-        frow("top variable genes", before, top_n)
-      }
-      bulk_genes <- names(gene_var)
-    } else {
-      bulk_genes <- colnames(bulk_x)
+    if (!is.null(var_cutoff)) {
+      before   <- length(gene_var)
+      gene_var <- gene_var[gene_var > var_cutoff]
+      if (verbose)
+        cat(sprintf("  variance > %g:      %d \u2192 %d\n", var_cutoff, before, length(gene_var)))
     }
-
-    before     <- length(bulk_genes)
-    genes_keep <- intersect(genes_keep, bulk_genes)
-    if (do_filter) frow("shared with training", before, length(genes_keep))
-    else           if (verbose) cat(sprintf("\n  shared genes with training: %d\n", length(genes_keep)))
-
-    if (length(genes_keep) == 0L)
-      stop("No genes remain after intersection - check that training and bulk gene names match.")
+    if (!is.null(top_var_genes) && length(gene_var) > 0L) {
+      before   <- length(gene_var)
+      top_n    <- min(as.integer(top_var_genes), length(gene_var))
+      gene_var <- sort(gene_var, decreasing = TRUE)[seq_len(top_n)]
+      if (verbose)
+        cat(sprintf("  top variable genes: %d \u2192 %d\n", before, top_n))
+    }
+    bulk_genes <- names(gene_var)
+    test_x     <- test_x[, bulk_genes, drop = FALSE]
   }
 
-  # -- Normalisation (aligned block; printed live) ----------------------------
 
-  ng_final <- length(genes_keep)
-  nlw <- max(nchar("training"), if (have_bulk) nchar("test") else 0L)
-  nmw <- max(nchar(normalize_train), if (have_bulk) nchar(normalize_test) else 0L)
-  nsw <- max(nchar(ns_tr), if (have_bulk) nchar(ns_tr) else 0L)
-  if (have_bulk) nsw <- max(nsw, nchar(ns_bk))
+  inter <- intersect(colnames(train_x), bulk_genes)
+  if (length(inter) == 0L)
+    stop("No genes remain after intersection - check that gene names match.")
 
-  norm_row <- function(tag, method, ns)
-    if (verbose) cat(sprintf("    %-*s %-*s %s \u00d7 %d genes\n",
-                nlw, tag, nmw, method, padn(ns, nsw), ng_final))
+  train_x <- train_x[, inter, drop = FALSE]
+  test_x  <- test_x[,  inter, drop = FALSE]
 
-  if (verbose) cat("\n  normalisation\n")
+  if (verbose) cat(sprintf("  intersected genes:  %d\n", length(inter)))
 
-  if (have_bulk) {
-    test_x <- normalize(bulk_x[, genes_keep, drop = FALSE], normalize_test)
-    norm_row("test", normalize_test, nrow(test_x))
+  genename   <- inter
+  celltypes  <- colnames(train_y)
+  samplename <- rownames(test_x)
+
+
+  if (identical(mode, "tape")) {
+    train_x <- log(train_x + 1)
+    test_x  <- log(test_x + 1)
+  } else {
+    train_x <- log2(train_x + 1)
+    test_x  <- log2(test_x + 1)
   }
 
-  train_x <- normalize(train_x[, genes_keep, drop = FALSE], normalize_train)
-  norm_row("training", normalize_train, nrow(train_x))
 
-  if (verbose) cat(sprintf("\nDone in %s\n", fmt_time()))
+  train_x <- scale_rows(train_x)
+  test_x  <- scale_rows(test_x)
 
-  # -- Return -----------------------------------------------------------------
+  if (verbose) cat(sprintf("Done in %s\n", fmt_time()))
 
   list(
-    train_x         = train_x,
-    train_y         = train_y,
-    test_x          = test_x,
-    genes           = genes_keep,
-    train_samples   = rownames(train_x),
-    test_samples    = if (!is.null(test_x)) rownames(test_x),
-    celltypes       = colnames(train_y),
-    normalize_train = normalize_train,
-    normalize_test  = normalize_test,
-    elapsed         = fmt_time()
+    train_x    = train_x,
+    train_y    = train_y,
+    test_x     = test_x,
+    genename   = genename,
+    celltypes  = celltypes,
+    samplename = samplename,
+    mode       = mode,
+    elapsed    = fmt_time()
   )
 }
 
