@@ -343,12 +343,12 @@ omics_simulate <- function(sc_data,
   if (!is.null(random_state)) set.seed(random_state)
 
   ref       <- omics_extract_sc_data(sc_data, celltype_col, assay, slot)
-  sc_counts <- ref$counts                       # cells x genes
+  sc_counts <- ref$counts                       
   celltypes <- ref$celltypes
   genename  <- ref$genes
 
-  # match Python: groupby('celltype') preserves first-seen order
-  ct_levels <- sort(unique(celltypes))
+
+  ct_levels <- sort(unique(celltypes), method = "radix")
   num_celltype <- length(ct_levels)
   if (is.null(d_prior)) d_prior <- rep(1, num_celltype)
   if (length(d_prior) != num_celltype)
