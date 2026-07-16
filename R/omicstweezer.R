@@ -329,7 +329,7 @@ omics_simulate <- function(sc_data,
                            n = 500L,
                            samplenum = 5000L,
                            random_state = NULL,
-                           sparse = TRUE,
+                           sparse = FALSE,
                            sparse_prob = 0.5,
                            rare = FALSE,
                            rare_percentage = 0.4,
@@ -348,7 +348,7 @@ omics_simulate <- function(sc_data,
   genename  <- ref$genes
 
   # match Python: groupby('celltype') preserves first-seen order
-  ct_levels    <- unique(celltypes)
+  ct_levels <- sort(unique(celltypes))
   num_celltype <- length(ct_levels)
   if (is.null(d_prior)) d_prior <- rep(1, num_celltype)
   if (length(d_prior) != num_celltype)
@@ -1006,7 +1006,7 @@ omics_tweezer <- function(sc_data,
                           scale_minmax   = FALSE,        
                           samplenum      = 5000L,
                           n_cells_per_bulk = 500L,
-                          sparse         = TRUE,
+                          sparse         = FALSE,
                           variance_threshold = 0.98,
                           scaler         = c("ss", "mms", "none"),
                           batch_size     = 128L,
@@ -1061,10 +1061,14 @@ cuda_index     = NULL) {
   if (scale_minmax) {
     ot_log("Outer MinMax scaling (mirrors train_predict scale=TRUE)",
            start_time = total_start)
-    rescale <- function(M) {
-      v <- as.vector(M); lo <- min(v); hi <- max(v); rng <- hi - lo
-      if (rng == 0) return(M * 0)
-      (M - lo) / rng
+    rescale <- function(M) {           # M is genes x samples
+      lo  <- apply(M, 1, min)
+      hi  <- apply(M, 1, max)
+      rng <- hi - lo
+      rng_safe <- ifelse(rng == 0, 1, rng)   # sklearn's _handle_zeros_in_scale
+      out <- sweep(sweep(M, 1, lo, "-"), 1, rng_safe, "/")
+      out[rng == 0, ] <- 0
+      out
     }
     simudata$X <- rescale(simudata$X)
     real_bulk  <- rescale(as.matrix(real_bulk))
