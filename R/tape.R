@@ -1,27 +1,5 @@
 
 
-
-
-
-
-tape_format_hms <- function(seconds) {
-  seconds <- max(0L, as.integer(round(seconds)))
-  hh <- seconds %/% 3600L
-  mm <- (seconds %% 3600L) %/% 60L
-  ss <- seconds %% 60L
-  sprintf("%02d:%02d:%02d", hh, mm, ss)
-}
-
-tape_log <- function(msg, ..., start_time = NULL) {
-  prefix <- ""
-  if (!is.null(start_time)) {
-    elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-    prefix <- paste0("[", tape_format_hms(elapsed), "] ")
-  }
-  message(prefix, sprintf(msg, ...))
-}
-
-
 #' Extract single-cell counts and cell-type labels for TAPE
 #'
 #' Internal helper that extracts a cells x genes expression matrix and the
@@ -258,7 +236,7 @@ tape_simulate <- function(sc_data,
   celltypes <- ref$celltypes
   genename  <- ref$genes
 
-  celltype_levels <- names(sort(table(celltypes), decreasing = FALSE))
+  celltype_levels <- sort(unique(celltypes), method = "radix")
   num_celltype <- length(celltype_levels)
 
   if (is.null(d_prior)) d_prior <- rep(1, num_celltype)
@@ -473,9 +451,9 @@ tape_process <- function(simudata, real_bulk,
   proc_start <- Sys.time()
   tape_log("Processing started", start_time = proc_start)
  
-  train_x <- as.data.frame(simudata$X)      
+  train_x <- simudata$X      
   train_y <- as.matrix(simudata$obs)
-  test_x  <- as.data.frame(t(real_bulk))    # samples x genes
+  test_x  <- t(as.matrix(real_bulk))    # samples x genes
  
   tape_log("Applying variance filtering", start_time = proc_start)
  
