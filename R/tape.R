@@ -627,7 +627,7 @@ tape_forward <- function(model, x, state = "train") {
   if (state == "test") {
     z <- nnf_relu(z)
     z_sum <- z$sum(dim = 2, keepdim = TRUE)
-    z <- z / (z_sum + 1e-8)
+    z <- z / (z_sum)
   }
 
   x_recon <- torch_mm(z, sigm)
