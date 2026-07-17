@@ -6,105 +6,68 @@
 \usage{
 scaden_process(
   sim_data,
-  bulk_data = NULL,
+  bulk_data,
+  mode = c("tape", "scaden"),
+  variance_threshold = 0.98,
+  scaler = c("mms", "ss"),
   var_cutoff = 0.1,
   top_var_genes = NULL,
-  normalize_train = c("log2_minmax", "log2", "none"),
-  normalize_test = c("log2_minmax", "log2", "none"),
   verbose = TRUE
 )
 }
 \arguments{
-\item{sim_data}{A list returned by [scaden_sim_pb()]. Must contain at least
-`train_x` and `train_y`.}
+\item{sim_data}{A list returned by [scaden_sim_pb()], with `train_x` and
+`train_y`.}
 
-\item{bulk_data}{Optional bulk expression matrix or `data.frame`. Gene names
-must be present in either row names or column names. The function will
-infer orientation and convert the matrix to samples x genes.}
+\item{bulk_data}{Bulk expression matrix or `data.frame`. Gene names must
+appear in row or column names; orientation is inferred.}
 
-\item{var_cutoff}{Numeric scalar. Genes in `bulk_data` with variance less
-than or equal to this threshold are removed before intersecting with the
-simulated training genes.}
+\item{mode}{Character scalar. `"tape"` (default) reproduces TAPE's
+`ProcessInputData`; `"scaden"` reproduces original Scaden's preprocessing.}
 
-\item{top_var_genes}{Optional integer scalar. If provided, only the top most
-variable genes in `bulk_data` are kept after applying `var_cutoff`.}
+\item{variance_threshold}{Numeric scalar in `[0, 1)`. `mode = "tape"` only.
+Fraction of genes defining the variance cutoff, applied separately to each
+matrix.}
 
-\item{normalize_train}{Character scalar specifying the transformation applied
-to the training matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.}
+\item{scaler}{Character scalar. `mode = "tape"` only. `"mms"` for per-sample
+min-max, `"ss"` for per-sample standardization.}
 
-\item{normalize_test}{Character scalar specifying the transformation applied
-to the test matrix. One of `"log2_minmax"`, `"log2"`, or `"none"`.}
+\item{var_cutoff}{Numeric scalar. `mode = "scaden"` only. Genes in
+`bulk_data` with variance at or below this value are dropped. Set to `NULL`
+to skip.}
 
-\item{verbose}{Logical scalar. If `TRUE`, prints progress messages and
-elapsed time.}
+\item{top_var_genes}{Optional integer scalar. `mode = "scaden"` only. Keep
+only the most variable genes after `var_cutoff`.}
+
+\item{verbose}{Logical scalar. Print progress.}
 }
 \value{
-A named list with components:
-\describe{
-  \item{train_x}{Processed training matrix with samples in rows and genes in
-  columns.}
-  \item{train_y}{Training target matrix with samples in rows and cell types
-  in columns.}
-  \item{test_x}{Processed bulk test matrix with samples in rows and genes in
-  columns, or `NULL` if `bulk_data` was not provided.}
-  \item{genes}{Character vector of genes retained after filtering and
-  intersection.}
-  \item{train_samples}{Character vector of training sample names.}
-  \item{test_samples}{Character vector of test sample names, or `NULL`.}
-  \item{celltypes}{Character vector of cell-type names.}
-  \item{normalize_train}{Training normalization method used.}
-  \item{normalize_test}{Test normalization method used.}
-  \item{elapsed}{Character scalar giving total runtime in `HH:MM:SS`
-  format.}
-}
+A named list with `train_x`, `train_y`, `test_x`, `genename`,
+  `celltypes`, `samplename`, `mode`, and `elapsed`.
 }
 \description{
-Aligns simulated pseudobulk training data with optional bulk test data,
-filters genes, applies normalization, and returns matrices ready for
-[scaden()] and [scaden_predict()].
+Aligns simulated pseudobulk training data with real bulk data, filters genes,
+log-transforms, and applies per-sample scaling. Two gene-filtering strategies
+are available via `mode`.
 }
 \details{
-The processing logic follows the Scaden-style setup where the simulated
-training matrix and real bulk matrix are restricted to a shared gene set.
-Optionally, genes can first be filtered by variance on the bulk data.
+The two modes differ only in gene filtering and scaler choice:
+
+\describe{
+  \item{`"tape"`}{Top-quantile variance cutoff applied to **both** matrices,
+  then intersect. `log(x + 1)`, then `mms` or `ss`.}
+  \item{`"scaden"`}{Absolute variance cutoff applied to the **bulk matrix
+  only**, then intersect with the training genes. `log2(x + 1)`, then
+  per-sample min-max (`log_min_max`); `scaler` is ignored.}
 }
-\examples{
-## Build a tiny single-cell reference (genes x cells) ---------------------
-set.seed(1)
-n_genes        <- 1000
-cell_types     <- c("Tcell", "Bcell", "Mono")
-cells_per_type <- 100
-n_cells        <- length(cell_types) * cells_per_type
 
-counts <- matrix(
-  rpois(n_genes * n_cells, lambda = 5),
-  nrow = n_genes, ncol = n_cells
-)
-rownames(counts) <- paste0("gene", seq_len(n_genes))
-colnames(counts) <- paste0("cell", seq_len(n_cells))
+The log base is in fact immaterial: both scalers are invariant to
+multiplication by a positive constant, so `log2` and `log` give identical
+output up to floating-point rounding. The bases are kept literal to their
+respective sources.
 
-meta <- data.frame(
-  cell_type = rep(cell_types, each = cells_per_type),
-  row.names = colnames(counts)
-)
-sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
-
-## Simulate training pseudobulks (samples x genes) ------------------------
-train_sim <- scaden_sim_pb(
-  sc, celltype_col = "cell_type",
-  samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
-)
-
-## Simulate a separate set to stand in for the real bulk ------------------
-test_sim <- scaden_sim_pb(
-  sc, celltype_col = "cell_type",
-  samplenum = 10, n = 100, sparse = FALSE, seed = 2, verbose = FALSE
-)
-real_bulk <- t(test_sim$train_x)   # scaden_process expects genes x samples
-
-## Variance filter, gene intersection, log2 + per-sample min-max ----------
-proc <- scaden_process(train_sim, bulk_data = real_bulk)
-print(str(proc$train_x))
-print(str(proc$test_x))
-
+Both scalers operate per sample (`fit_transform(x.T).T` in sklearn), use
+population statistics (`ddof = 0`), and map constant samples to exactly zero,
+matching sklearn's `_handle_zeros_in_scale`. The `"tape"` variance filter uses
+`ddof = 1` to match `pandas.DataFrame.var`.
 }

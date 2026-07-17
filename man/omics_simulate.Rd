@@ -10,7 +10,7 @@ omics_simulate(
   n = 500L,
   samplenum = 5000L,
   random_state = NULL,
-  sparse = TRUE,
+  sparse = FALSE,
   sparse_prob = 0.5,
   rare = FALSE,
   rare_percentage = 0.4,

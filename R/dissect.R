@@ -190,8 +190,7 @@ dissect_aggregate_rows_by_name <- function(x, duplicated = "first") {
 #'   to be kept during preprocessing.
 #' @param mt_cutoff Numeric scalar. Maximum allowed mitochondrial percentage per
 #'   cell.
-#' @param min_expr Numeric scalar. Minimum mean `log1p` expression threshold for
-#'   gene retention after preprocessing.
+#' @param min_expr Numeric scalar. Minimum mean `log1p` expression threshold
 #' @param downsample Numeric scalar or `NULL`. Optional downsampling factor for
 #'   spatial transcriptomics simulation.
 #' @param seed Integer scalar. Random seed used for simulation.
@@ -227,7 +226,7 @@ dissect_aggregate_rows_by_name <- function(x, duplicated = "first") {
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
 #'
-#' @importFrom stats median rgamma rmultinom setNames
+#' @importFrom stats median rgamma rhyper setNames
 #' @examples
 #' \dontrun{
 #' sim <- dissect_simulate(
@@ -312,7 +311,7 @@ dissect_simulate <- function(sc_data,
   lib_safe[lib_safe == 0] <- 1
   expr <- expr %*% Matrix::Diagonal(x = median_lib / lib_safe)
 
-  gene_means <- Matrix::rowMeans(log1p(expr))
+  gene_means <- log1p(Matrix::rowMeans(expr))
   expr <- expr[gene_means > min_expr, , drop = FALSE]
 
   expr_cg <- Matrix::t(expr)
@@ -321,7 +320,7 @@ dissect_simulate <- function(sc_data,
     gene_names <- rownames(expr)
   }
 
-  celltype_names <- sort(unique(celltypes))
+  celltype_names <- sort(unique(celltypes), method = "radix")
   n_celltypes <- length(celltype_names)
 
   if (is.null(n_samples)) {
@@ -561,11 +560,24 @@ dissect_simulate <- function(sc_data,
       lib_i <- sum(X[i, ])
       if (lib_i <= 0) next
       target <- as.integer(round(downsample * lib_i))
-      if (target <= 0) {
-        X[i, ] <- 0
-      } else {
-        X[i, ] <- as.numeric(rmultinom(1, size = target, prob = X[i, ] / lib_i))
+      if (target <= 0) { X[i, ] <- 0; next }
+      if (target >= lib_i) next
+      # sc.pp.downsample_counts defaults to replace = FALSE: reads are drawn
+      # without replacement (multivariate hypergeometric), so a gene can never
+      # gain reads. rmultinom() samples with replacement.
+      x <- as.integer(X[i, ])
+      remaining <- sum(x)
+      drawn <- target
+      out <- integer(length(x))
+      for (g in seq_along(x)) {
+        if (drawn <= 0L) break
+        if (x[g] > 0L) {
+          out[g] <- stats::rhyper(1, m = x[g], n = remaining - x[g], k = drawn)
+          drawn <- drawn - out[g]
+        }
+        remaining <- remaining - x[g]
       }
+      X[i, ] <- out
     }
   }
 
@@ -648,7 +660,7 @@ dissect_simulate <- function(sc_data,
 #'
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
-#'
+#' @importFrom stats var
 #' @examples
 #' \dontrun{
 #' proc <- dissect_process(
@@ -919,8 +931,11 @@ dissect_resolve_device <- function(device = c("auto", "cpu", "cuda"),
 #' @param n_hidden_layers Integer scalar. Number of hidden layers in the
 #'   fraction model.
 #' @param hidden_units Integer vector. Number of units in each hidden layer.
-#' @param hidden_activation Character scalar. In the original executed Python,
-#'   this is effectively `"relu6"` or otherwise `"relu"`.
+#' @param hidden_activation Character scalar. Hidden-layer activation, applied
+#'   to every ensemble model. Note that the reference Python mutates its config
+#'   in place inside the model loop, so only the first model receives `relu6`
+#'   and the remaining four fall back to `relu`; this implementation follows the
+#'   documented behaviour instead.
 #' @param output_activation Character scalar. Output activation function.
 #' @param loss Character scalar. One of `"kldivergence"`, `"l2"`, or `"l1"`.
 #' @param n_steps Integer scalar. Number of training steps.
@@ -961,7 +976,7 @@ dissect_resolve_device <- function(device = c("auto", "cpu", "cuda"),
 #'
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
-#'
+#' @importFrom stats runif
 #' @importFrom torch torch_tensor torch_float32 nn_module nn_module_list nn_linear nn_dropout nnf_relu nnf_softmax torch_sigmoid torch_tanh torch_clamp optim_adam with_no_grad torch_mean torch_sum torch_log torch_abs torch_manual_seed  cuda_synchronize torch_device
 #' @examples
 #' \dontrun{
@@ -1424,8 +1439,8 @@ dissect_prop <- function(bulk = NULL,
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
 #' 
-#' @importFrom stats setNames quantile
-#' @importFrom torch torch_tensor torch_float32 nn_module nn_linear nnf_relu torch_cat torch_randn_like torch_exp torch_mean optim_adam nn_mse_loss with_no_grad torch_manual_seed cuda_synchronize torch_device
+#' @importFrom stats setNames quantile runif
+#' @importFrom torch torch_tensor torch_float32 nn_module nn_linear nnf_relu torch_cat torch_randn_like torch_exp torch_mean torch_sum optim_adam with_no_grad torch_manual_seed cuda_synchronize torch_device
 #' @examples
 #' \dontrun{
 #' expr <- dissect_expr(
@@ -1557,6 +1572,13 @@ dissect_expr <- function(bulk = NULL,
     layer_gene_idx[[ct]] <- idx
   }
 
+  layer_libs <- setNames(vector("list", length(ct_names)), ct_names)
+  for (ct in ct_names) {
+    lib <- rowSums(layers[[ct]])   # full gene set -- layers is not subset here
+    lib[lib == 0] <- 1
+    layer_libs[[ct]] <- lib
+  }
+
   mean_sum_sim <- mean(rowSums(X_sim))
   real_lib <- rowSums(X_real)
   real_lib[real_lib == 0] <- 1
@@ -1643,7 +1665,7 @@ dissect_expr <- function(bulk = NULL,
   vae <- vae$to(device = device_obj)
 
   optimizer <- optim_adam(vae$parameters, lr = lr)
-  mse_loss_fn <- nn_mse_loss(reduction = "sum")
+  mse_loss_fn <- function(pred, target) torch_sum(torch_mean((pred - target)^2, dim = 2))
 
   expand_flat_indices <- function(flat_idx, n_ct) {
     sample_idx <- ((flat_idx - 1L) %/% n_ct) + 1L
@@ -1666,13 +1688,11 @@ dissect_expr <- function(bulk = NULL,
       take <- which(ct_idx == j)
       if (!length(take)) next
 
-      layer_block <- layers[[ct_names[j]]][sim_idx[take], layer_gene_idx[[ct_names[j]]], drop = FALSE]
+      ct_j <- ct_names[j]
+      layer_block <- layers[[ct_j]][sim_idx[take], layer_gene_idx[[ct_j]], drop = FALSE]
 
       if (!is.null(normalize_simulated) && normalize_simulated == "cpm") {
-        lib <- rowSums(layer_block)
-        lib[lib == 0] <- 1
-        layer_block <- sweep(layer_block, 1, lib, "/")
-        layer_block <- sweep(layer_block, 1, rep(1e6, nrow(layer_block)), "*")
+        layer_block <- sweep(layer_block, 1, layer_libs[[ct_j]][sim_idx[take]], "/") * 1e6
       }
 
       layer_block <- log1p(layer_block)
@@ -1870,9 +1890,13 @@ dissect_expr <- function(bulk = NULL,
   ct_labels <- rep(ct_names, times = n_real)
   sample_labels <- rep(sample_names, each = n_ct)
 
-  scaled_counts <- scale(est)
+  # scanpy's sc.pp.scale(max_value = 10) clips only the upper tail and uses a
+  # population sd (ddof = 0); base R scale() uses ddof = 1 and no clipping.
+  ctr <- colMeans(est)
+  sdv <- sqrt(colMeans(sweep(est, 2, ctr, "-")^2))
+  sdv[sdv == 0] <- 1
+  scaled_counts <- sweep(sweep(est, 2, ctr, "-"), 2, sdv, "/")
   scaled_counts[scaled_counts > 10] <- 10
-  scaled_counts[scaled_counts < -10] <- -10
   colnames(scaled_counts) <- common_genes
 
   expression_combined <- as.data.frame(est)
@@ -1927,8 +1951,7 @@ dissect_expr <- function(bulk = NULL,
 #' @param min_genes Integer scalar. Minimum genes per cell for preprocessing.
 #' @param min_cells Integer scalar. Minimum cells per gene for preprocessing.
 #' @param mt_cutoff Numeric scalar. Mitochondrial percentage cutoff.
-#' @param min_expr Numeric scalar. Minimum mean expression threshold after
-#'   `log1p`.
+#' @param min_expr Numeric scalar. Minimum mean `log1p` expression threshold.
 #' @param downsample Numeric scalar or `NULL`. Downsampling factor for ST
 #'   simulation.
 #' @param test_dataset_type Character scalar. Either `"bulk"` or

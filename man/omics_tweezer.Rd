@@ -11,7 +11,7 @@ omics_tweezer(
   scale_minmax = FALSE,
   samplenum = 5000L,
   n_cells_per_bulk = 500L,
-  sparse = TRUE,
+  sparse = FALSE,
   variance_threshold = 0.98,
   scaler = c("ss", "mms", "none"),
   batch_size = 128L,

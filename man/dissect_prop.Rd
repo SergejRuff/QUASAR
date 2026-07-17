@@ -65,8 +65,11 @@ fraction model.}
 
 \item{hidden_units}{Integer vector. Number of units in each hidden layer.}
 
-\item{hidden_activation}{Character scalar. In the original executed Python,
-this is effectively `"relu6"` or otherwise `"relu"`.}
+\item{hidden_activation}{Character scalar. Hidden-layer activation, applied
+to every ensemble model. Note that the reference Python mutates its config
+in place inside the model loop, so only the first model receives `relu6`
+and the remaining four fall back to `relu`; this implementation follows the
+documented behaviour instead.}
 
 \item{output_activation}{Character scalar. Output activation function.}
 

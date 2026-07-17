@@ -19,128 +19,73 @@ scaden_sim_pb(
   sparse_prob = 0.5,
   rare = FALSE,
   rare_percentage = 0.4,
-  unknown_celltypes = "unknown",
+  unknown_celltypes = character(0),
   unknown_label = "Unknown",
-  select_ct = NULL,
   verbose = TRUE
 )
 }
 \arguments{
-\item{sc_data}{A single-cell reference object. Supported inputs are a
-`Seurat` object, a `SingleCellExperiment` object, a matrix, a
-`data.frame`, or a sparse `Matrix`.}
+\item{sc_data}{A `Seurat`, `SingleCellExperiment`, matrix, `data.frame`, or
+sparse `Matrix` reference.}
 
-\item{metadata}{Optional metadata for matrix-like input. Must contain the
-column specified by `celltype_col` when supplied.}
+\item{metadata}{Optional metadata for matrix-like input.}
 
-\item{celltypes}{Optional character vector of cell-type labels for matrix-like
-input. Used only when `metadata` is not supplied.}
+\item{celltypes}{Optional character vector of cell-type labels for
+matrix-like input. Used only when `metadata` is not supplied.}
 
-\item{celltype_col}{Character scalar giving the metadata column that contains
-cell-type labels. Must be provided for `Seurat`, `SingleCellExperiment`,
-or matrix input with `metadata`.}
+\item{celltype_col}{Character scalar giving the metadata column holding
+cell-type labels.}
 
-\item{assay}{Character scalar giving the assay name to extract from a
-`Seurat` object.}
+\item{assay}{Character scalar giving the Seurat assay name.}
 
-\item{slot}{Character scalar giving the assay slot or assay name to extract.
-For `Seurat`, this is interpreted as a slot within `assay`. For
-`SingleCellExperiment`, this is interpreted as an assay name.}
+\item{slot}{Character scalar giving the assay slot/layer (Seurat) or assay
+name (SingleCellExperiment).}
 
-\item{d_prior}{Optional numeric vector of Dirichlet concentration parameters.
-If `NULL`, a symmetric Dirichlet prior of ones is used.}
+\item{d_prior}{Optional numeric vector of Dirichlet concentration
+parameters. If `NULL`, a symmetric prior of ones is used. Length must equal
+the number of cell types *before* unknown merging.}
 
-\item{n}{Integer scalar. Target number of single cells per simulated
-pseudobulk before rounding to integer cell counts.}
+\item{n}{Integer scalar. Target cells per pseudobulk before flooring.}
 
-\item{samplenum}{Integer scalar. Number of pseudobulk samples to generate.}
+\item{samplenum}{Integer scalar. Number of pseudobulks to generate.}
 
-\item{seed}{Optional integer scalar used to control reproducible simulation.}
+\item{seed}{Optional integer scalar for reproducible simulation.}
 
-\item{sparse}{Logical scalar. If `TRUE`, a subset of simulated samples is
-forced to contain zero fractions for a subset of cell types.}
-
-\item{sparse_prob}{Numeric scalar in `[0, 1)`. Controls both the proportion
-of sparse samples and the proportion of cell types zeroed within those
+\item{sparse}{Logical scalar. Zero out a subset of cell types in a subset of
 samples.}
 
-\item{rare}{Logical scalar. If `TRUE`, a subset of cell types is perturbed to
-have very small fractions in a subset of samples.}
+\item{sparse_prob}{Numeric scalar in `[0, 1)`. Controls both the proportion
+of sparse samples and the proportion of cell types zeroed within them.}
 
-\item{rare_percentage}{Numeric scalar in `[0, 1]`. Fraction of cell types to
-treat as rare when `rare = TRUE`.}
+\item{rare}{Logical scalar. Perturb a subset of cell types to very small
+fractions in a subset of samples.}
 
-\item{unknown_celltypes}{Character vector of cell-type labels that should be
-merged into a single unknown class before simulation.}
+\item{rare_percentage}{Numeric scalar in `[0, 1]`. Fraction of cell types
+treated as rare when `rare = TRUE`.}
 
-\item{unknown_label}{Character scalar used as the merged label for unknown
-cell types.}
+\item{unknown_celltypes}{Character vector of cell-type labels to merge into a
+single unknown class. Defaults to `character(0)` (no merging).}
 
-\item{select_ct}{Optional character vector restricting simulation to a subset
-of cell types after unknown-cell merging.}
+\item{unknown_label}{Character scalar used as the merged label.}
 
-\item{verbose}{Logical scalar. If `TRUE`, prints progress information and
-elapsed time.}
+\item{verbose}{Logical scalar. Print progress.}
 }
 \value{
-A named list with components:
-\describe{
-  \item{train_x}{Numeric matrix with samples in rows and genes in columns.
-  This is the training input expected by [scaden()].}
-  \item{train_y}{Numeric matrix with samples in rows and cell types in
-  columns. This is the training target expected by [scaden()].}
-  \item{cell_num}{Integer matrix giving realized sampled cell counts per
-  sample and cell type.}
-  \item{celltypes}{Character vector of cell-type names used in the
-  simulation.}
-  \item{genes}{Character vector of gene names.}
-  \item{elapsed}{Character scalar giving total runtime in `HH:MM:SS`
-  format.}
-  \item{settings}{List of simulation settings used to generate the output.}
-}
+A named list with `train_x` (samples x genes), `train_y`
+  (samples x cell types), `cell_num`, `celltypes`, `genes`, `elapsed`, and
+  `settings`.
 }
 \description{
-Generates artificial pseudobulk samples from single-cell reference data and
-returns them in a format directly compatible with [scaden()].
+Faithful port of `generate_simulated_data()`. Counts are sampled with
+replacement within each cell type according to Dirichlet-generated mixture
+proportions. Optionally merges a set of cell types into a single unknown
+class, following Scaden's post-simulation merge semantics.
 }
 \details{
-The function accepts `Seurat`, `SingleCellExperiment`, base matrices,
-`data.frame`s, and sparse `Matrix` objects. Counts are sampled with
-replacement within each cell type according to Dirichlet-generated mixture
-proportions. Optional sparse and rare-cell perturbations can be applied to
-mimic more heterogeneous compositions.
-
-
-The output is structured to plug directly into [scaden_process()] and
-[scaden()]. In particular, `train_x` is returned as a samples x genes matrix
-and `train_y` as a samples x cell-types matrix.
-}
-\examples{
-set.seed(1)
-n_genes        <- 1000
-cell_types     <- c("Tcell", "Bcell", "Mono")
-cells_per_type <- 100
-n_cells        <- length(cell_types) * cells_per_type
-
-counts <- matrix(
-  rpois(n_genes * n_cells, lambda = 5),
-  nrow = n_genes, ncol = n_cells
-)
-rownames(counts) <- paste0("gene", seq_len(n_genes))
-colnames(counts) <- paste0("cell", seq_len(n_cells))
-
-meta <- data.frame(
-  cell_type = rep(cell_types, each = cells_per_type),
-  row.names = colnames(counts)
-)
-sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
-
-## Simulate training pseudobulks (samples x genes) ------------------------
-train_sim <- scaden_sim_pb(
-  sc, celltype_col = "cell_type",
-  samplenum = 50, n = 100, sparse = FALSE, seed = 1, verbose = FALSE
-)
-
-print(head(train_sim$train_x))
-
+Unknown merging happens **after** simulation: each original cell type gets
+its own Dirichlet component and is sampled independently, and the proportion
+columns of the unknown types are then summed into one column. This mirrors
+Scaden's `y.groupby(y.columns, axis=1).sum()` and differs from relabelling
+cells before simulation, which would give the merged class a single Dirichlet
+component and pool its cells uniformly.
 }

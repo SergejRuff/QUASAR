@@ -59,8 +59,7 @@ to be kept during preprocessing.}
 \item{mt_cutoff}{Numeric scalar. Maximum allowed mitochondrial percentage per
 cell.}
 
-\item{min_expr}{Numeric scalar. Minimum mean `log1p` expression threshold for
-gene retention after preprocessing.}
+\item{min_expr}{Numeric scalar. Minimum mean `log1p` expression threshold}
 
 \item{downsample}{Numeric scalar or `NULL`. Optional downsampling factor for
 spatial transcriptomics simulation.}
