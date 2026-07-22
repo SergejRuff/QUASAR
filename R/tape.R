@@ -821,7 +821,32 @@ tape_train <- function(train_x, train_y,
 }
 
 
+#' Clone a trained TAPE model
+#'
+#' Internal helper that creates an independent copy of a trained TAPE model by
+#' copying encoder and decoder state dictionaries in memory.
+#'
+#' @param model A trained TAPE model.
+#'
+#' @return A new model list with the same weights as `model`.
+#'
+#' @importFrom torch cuda_is_available
+#' @export
+tape_clone_model <- function(model) {
+  input_dim <- model$encoder[[2]]$in_features
+  output_dim <- model$encoder[[13]]$out_features
 
+  new_model <- tape_create_model(input_dim, output_dim)
+
+  dev <- if (cuda_is_available()) "cuda" else "cpu"
+  new_model$encoder <- new_model$encoder$to(device = dev)
+  new_model$decoder <- new_model$decoder$to(device = dev)
+
+  new_model$encoder$load_state_dict(model$encoder$state_dict())
+  new_model$decoder$load_state_dict(model$decoder$state_dict())
+
+  new_model
+}
 
 
 
@@ -834,13 +859,15 @@ tape_train <- function(train_x, train_y,
 #' @param data_np Numeric matrix with samples in rows and genes in columns.
 #' @param step Integer scalar. Number of optimization steps per sub-stage.
 #' @param max_iter Integer scalar. Number of alternating refinement rounds.
+#' @param verbose Logical scalar. Whether to print per-step progress.
 #'
 #' @return A named list with `sigm` and `pred`.
 #'
 #' @importFrom torch cuda_is_available torch_tensor optim_adam nnf_l1_loss
 #' @keywords internal
 #' @noRd
-tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L) {
+tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L,
+                                verbose = TRUE) {
   adapt_start <- Sys.time()
 
   dev <- if (cuda_is_available()) "cuda" else "cpu"
@@ -853,72 +880,58 @@ tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L) {
   ori_sigm <- out$sigm$detach()$clone()
   ori_pred <- out$z$detach()$clone()
 
+  # Fresh optimizers each call == fresh optimizers per sample in Python.
   optD <- optim_adam(tape_get_decoder_parameters(model), lr = 1e-4)
   optE <- optim_adam(tape_get_encoder_parameters(model), lr = 1e-4)
 
   total_steps <- max_iter * step * 2L
   step_counter <- 0L
-  last_loss <- NA_real_
   model_name <- "TAPE-adapt"
+
+  report <- function() {
+    last_loss <- as.numeric(loss$item())
+    elapsed <- as.numeric(difftime(Sys.time(), adapt_start, units = "secs"))
+    eta <- (elapsed / step_counter) * (total_steps - step_counter)
+    cat(sprintf(
+      "\r%s | [%s] %4d/%4d | mean loss %.6f | elapsed %s | ETA %s",
+      model_name, tape_make_bar(step_counter, total_steps, width = 30L),
+      step_counter, total_steps, last_loss,
+      tape_format_hms(elapsed), tape_format_hms(eta)
+    ))
+    utils::flush.console()
+  }
 
   for (k in seq_len(max_iter)) {
     model$encoder$train()
     model$decoder$train()
 
     for (i in seq_len(step)) {
-      step_counter <- step_counter + 1L
-      tape_set_seed(0)
+      # torch_manual_seed(0) reproduces Python's per-step reproducibility(0):
+      # it fixes the dropout mask via the torch generator. The base-R set.seed
+      # in the original was inert here (nothing in this loop draws from R's RNG).
+      torch_manual_seed(0)
       optD$zero_grad()
       out <- tape_forward(model, data, state = "train")
       loss <- nnf_l1_loss(out$x_recon, data) + nnf_l1_loss(out$sigm, ori_sigm)
       loss$backward()
       optD$step()
 
-      last_loss <- as.numeric(loss$item())
-      elapsed <- as.numeric(difftime(Sys.time(), adapt_start, units = "secs"))
-      avg_per_step <- elapsed / step_counter
-      eta <- avg_per_step * (total_steps - step_counter)
-
-      cat(sprintf(
-        "\r%s | [%s] %3d/%3d | mean loss %.6f | elapsed %s | ETA %s",
-        model_name,
-        tape_make_bar(step_counter, total_steps, width = 30L),
-        step_counter, total_steps,
-        last_loss,
-        tape_format_hms(elapsed),
-        tape_format_hms(eta)
-      ))
-      utils::flush.console()
+      if (verbose) { step_counter <- step_counter + 1L; report() }
     }
 
     for (i in seq_len(step)) {
-      step_counter <- step_counter + 1L
-      tape_set_seed(0)
+      torch_manual_seed(0)
       optE$zero_grad()
       out <- tape_forward(model, data, state = "train")
       loss <- nnf_l1_loss(ori_pred, out$z) + nnf_l1_loss(out$x_recon, data)
       loss$backward()
       optE$step()
 
-      last_loss <- as.numeric(loss$item())
-      elapsed <- as.numeric(difftime(Sys.time(), adapt_start, units = "secs"))
-      avg_per_step <- elapsed / step_counter
-      eta <- avg_per_step * (total_steps - step_counter)
-
-      cat(sprintf(
-        "\r%s | [%s] %3d/%3d | mean loss %.6f | elapsed %s | ETA %s",
-        model_name,
-        tape_make_bar(step_counter, total_steps, width = 30L),
-        step_counter, total_steps,
-        last_loss,
-        tape_format_hms(elapsed),
-        tape_format_hms(eta)
-      ))
-      utils::flush.console()
+      if (verbose) { step_counter <- step_counter + 1L; report() }
     }
   }
 
-  cat("\n")
+  if (verbose) cat("\n")
 
   model$encoder$eval()
   model$decoder$eval()
@@ -994,14 +1007,19 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
       TestSigmList <- array(0, dim = c(n_samples, n_ct, n_genes))
       TestPred <- matrix(0, nrow = n_samples, ncol = n_ct)
 
+      base_encoder_state <- lapply(model$encoder$state_dict(), function(x) x$clone())
+      base_decoder_state <- lapply(model$decoder$state_dict(), function(x) x$clone())
+
       tape_log("Start adaptive training at high-resolution", start_time = pred_start)
       pb <- utils::txtProgressBar(min = 0, max = n_samples, style = 3)
 
       for (i in seq_len(n_samples)) {
-        # Reload model weights by deep-copying
-        model_copy <- tape_clone_model(model)
+        model$encoder$load_state_dict(base_encoder_state)
+        model$decoder$load_state_dict(base_decoder_state)
+
         x <- test_x[i, , drop = FALSE]
-        res <- tape_adaptive_stage(model_copy, x, step = 300L, max_iter = 3L)
+        res <- tape_adaptive_stage(model, x, step = 300L, max_iter = 3L,
+                                   verbose = FALSE)
         TestSigmList[i, , ] <- res$sigm
         TestPred[i, ] <- res$pred
         utils::setTxtProgressBar(pb, i)
@@ -1029,7 +1047,8 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
 
     } else if (mode == "overall") {
       tape_log("Start adaptive training for all samples", start_time = pred_start)
-      res <- tape_adaptive_stage(model, test_x, step = 300L, max_iter = 3L)
+      res <- tape_adaptive_stage(model, test_x, step = 300L, max_iter = 3L,
+                                 verbose = TRUE)
 
       sigm <- as.data.frame(res$sigm)
       colnames(sigm) <- genename
@@ -1056,45 +1075,6 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
     return(list(sigm = NULL, pred = pred))
   }
 }
-
-
-
-
-
-#' Clone a trained TAPE model
-#'
-#' Internal helper that creates an independent copy of a trained TAPE model by
-#' copying encoder and decoder state dictionaries in memory.
-#'
-#' @param model A trained TAPE model.
-#'
-#' @return A new model list with the same weights as `model`.
-#'
-#' @importFrom torch cuda_is_available
-#' @keywords internal
-#' @noRd
-tape_clone_model <- function(model) {
-  input_dim <- model$encoder[[2]]$in_features
-  output_dim <- model$encoder[[13]]$out_features
-
-  new_model <- tape_create_model(input_dim, output_dim)
-
-  dev <- if (cuda_is_available()) "cuda" else "cpu"
-  new_model$encoder <- new_model$encoder$to(device = dev)
-  new_model$decoder <- new_model$decoder$to(device = dev)
-
-  new_model$encoder$load_state_dict(model$encoder$state_dict())
-  new_model$decoder$load_state_dict(model$decoder$state_dict())
-
-  new_model
-}
-
-
-
-
-
-
-
 
 
 

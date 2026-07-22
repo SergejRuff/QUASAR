@@ -87,8 +87,7 @@ expression and enables downstream expression estimation.}
 
 \item{mt_cutoff}{Numeric scalar. Mitochondrial percentage cutoff.}
 
-\item{min_expr}{Numeric scalar. Minimum mean `log1p` expression threshold
-`log1p`.}
+\item{min_expr}{Numeric scalar. Minimum mean `log1p` expression threshold.}
 
 \item{downsample}{Numeric scalar or `NULL`. Downsampling factor for ST
 simulation.}
