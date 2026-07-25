@@ -869,79 +869,95 @@ tape_clone_model <- function(model) {
 tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L,
                                 verbose = TRUE) {
   adapt_start <- Sys.time()
-
+ 
   dev <- if (cuda_is_available()) "cuda" else "cpu"
   data <- torch_tensor(data_np, device = dev)
-
+ 
   model$encoder$eval()
   model$decoder$eval()
-
-  out <- tape_forward(model, data, state = "test")
+ 
+  out <- with_no_grad(tape_forward(model, data, state = "test"))
   ori_sigm <- out$sigm$detach()$clone()
   ori_pred <- out$z$detach()$clone()
-
-  # Fresh optimizers each call == fresh optimizers per sample in Python.
+  rm(out)
+ 
   optD <- optim_adam(tape_get_decoder_parameters(model), lr = 1e-4)
   optE <- optim_adam(tape_get_encoder_parameters(model), lr = 1e-4)
-
+ 
+  masks <- tape_make_masks(
+    dims = c(ncol(data_np), 512L, 256L, 128L),
+    n_rows = nrow(data_np),
+    dev = dev
+  )
+ 
   total_steps <- max_iter * step * 2L
   step_counter <- 0L
   model_name <- "TAPE-adapt"
-
-  report <- function() {
-    last_loss <- as.numeric(loss$item())
+ 
+  report <- function(value) {
     elapsed <- as.numeric(difftime(Sys.time(), adapt_start, units = "secs"))
     eta <- (elapsed / step_counter) * (total_steps - step_counter)
     cat(sprintf(
       "\r%s | [%s] %4d/%4d | mean loss %.6f | elapsed %s | ETA %s",
       model_name, tape_make_bar(step_counter, total_steps, width = 30L),
-      step_counter, total_steps, last_loss,
+      step_counter, total_steps, value,
       tape_format_hms(elapsed), tape_format_hms(eta)
     ))
     utils::flush.console()
   }
-
+ 
   for (k in seq_len(max_iter)) {
     model$encoder$train()
     model$decoder$train()
-
+ 
+    z_fixed <- with_no_grad(tape_masked_encode(model$encoder, data, masks))
+ 
     for (i in seq_len(step)) {
-      # torch_manual_seed(0) reproduces Python's per-step reproducibility(0):
-      # it fixes the dropout mask via the torch generator. The base-R set.seed
-      # in the original was inert here (nothing in this loop draws from R's RNG).
-      torch_manual_seed(0)
       optD$zero_grad()
-      out <- tape_forward(model, data, state = "train")
-      loss <- nnf_l1_loss(out$x_recon, data) + nnf_l1_loss(out$sigm, ori_sigm)
+      sigm <- tape_sigmatrix(model)
+      loss <- nnf_l1_loss(torch_mm(z_fixed, sigm), data) +
+        nnf_l1_loss(sigm, ori_sigm)
       loss$backward()
       optD$step()
-
-      if (verbose) { step_counter <- step_counter + 1L; report() }
+ 
+      if (verbose) {
+        step_counter <- step_counter + 1L
+        report(as.numeric(loss$item()))
+      }
     }
-
+ 
+    rm(z_fixed)
+    sigm_fixed <- with_no_grad(tape_sigmatrix(model))
+ 
     for (i in seq_len(step)) {
-      torch_manual_seed(0)
       optE$zero_grad()
-      out <- tape_forward(model, data, state = "train")
-      loss <- nnf_l1_loss(ori_pred, out$z) + nnf_l1_loss(out$x_recon, data)
+      z <- tape_masked_encode(model$encoder, data, masks)
+      loss <- nnf_l1_loss(ori_pred, z) +
+        nnf_l1_loss(torch_mm(z, sigm_fixed), data)
       loss$backward()
       optE$step()
-
-      if (verbose) { step_counter <- step_counter + 1L; report() }
+ 
+      if (verbose) {
+        step_counter <- step_counter + 1L
+        report(as.numeric(loss$item()))
+      }
     }
+ 
+    rm(sigm_fixed)
   }
-
+ 
   if (verbose) cat("\n")
-
+ 
   model$encoder$eval()
   model$decoder$eval()
-  out <- tape_forward(model, data, state = "test")
-
+  out <- with_no_grad(tape_forward(model, data, state = "test"))
+ 
   list(
     sigm = as.matrix(out$sigm$cpu()$detach()),
     pred = as.matrix(out$z$cpu()$detach())
   )
 }
+
 
 
 
@@ -966,74 +982,94 @@ tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L,
 #' @param samplename Character vector of sample names.
 #' @param adaptive Logical scalar. Whether to run adaptive refinement.
 #' @param mode Character scalar. Either `"overall"` or `"high-resolution"`.
-#' 
-#' @details
-#' This function implements TAPE prediction and optional tissue-adaptive
-#' refinement as described by Chen et al. (2022), following the workflow used
-#' in the original PyTorch implementation.
+#' @param chunk_size Integer scalar. Number of samples adapted simultaneously in
+#'   high-resolution mode.
 #'
 #' @return A named list with components:
 #' \describe{
-#'   \item{sigm}{Either `NULL`, a signature matrix data frame, or a named list
-#'   of per-cell-type signature matrices depending on `adaptive` and `mode`.}
+#'   \item{sigm}{A named list of per-cell-type signature matrices in
+#'   high-resolution mode, a signature matrix data frame in overall adaptive
+#'   mode, and `NULL` when `adaptive` is `FALSE`.}
 #'   \item{pred}{A data frame of predicted proportions with samples in rows and
 #'   cell types in columns.}
 #' }
 #'
-#' @importFrom torch cuda_is_available torch_tensor
+#' @details
+#' High-resolution mode adapts every sample with its own copy of the trained
+#' model, and processes `chunk_size` samples concurrently as an ensemble of
+#' independent models. The supplied model is read only in this mode and is
+#' returned unmodified.
+#'
+#' @importFrom torch cuda_is_available cuda_empty_cache torch_tensor with_no_grad
 #' @examples
 #' \dontrun{
-#' pred <- tape_predict(
+#' res <- tape_predict(
 #'   model = model,
 #'   test_x = processed$test_x,
 #'   genename = processed$genename,
 #'   celltypes = processed$celltypes,
-#'   samplename = processed$samplename
+#'   samplename = processed$samplename,
+#'   mode = "high-resolution",
+#'   chunk_size = 16L
 #' )
 #' }
 #' @export
 tape_predict <- function(model, test_x, genename, celltypes, samplename,
                          adaptive = TRUE,
-                         mode = "overall") {
-
+                         mode = "overall",
+                         chunk_size = 16L) {
+ 
   pred_start <- Sys.time()
-  tape_log("Prediction started | mode = %s | adaptive = %s", mode, adaptive, start_time = pred_start)
-
+  tape_log("Prediction started | mode = %s | adaptive = %s", mode, adaptive,
+           start_time = pred_start)
+ 
   if (adaptive) {
     if (mode == "high-resolution") {
       n_samples <- nrow(test_x)
       n_ct <- length(celltypes)
       n_genes <- length(genename)
+ 
       TestSigmList <- array(0, dim = c(n_samples, n_ct, n_genes))
       TestPred <- matrix(0, nrow = n_samples, ncol = n_ct)
-
-      base_encoder_state <- lapply(model$encoder$state_dict(), function(x) x$clone())
-      base_decoder_state <- lapply(model$decoder$state_dict(), function(x) x$clone())
-
-      tape_log("Start adaptive training at high-resolution", start_time = pred_start)
+ 
+      chunk_size <- max(1L, as.integer(chunk_size))
+      starts <- seq(1L, n_samples, by = chunk_size)
+ 
+      tape_log("Start adaptive training at high-resolution | chunk size %d",
+               chunk_size, start_time = pred_start)
       pb <- utils::txtProgressBar(min = 0, max = n_samples, style = 3)
-
-      for (i in seq_len(n_samples)) {
-        model$encoder$load_state_dict(base_encoder_state)
-        model$decoder$load_state_dict(base_decoder_state)
-
-        x <- test_x[i, , drop = FALSE]
-        res <- tape_adaptive_stage(model, x, step = 300L, max_iter = 3L,
-                                   verbose = FALSE)
-        TestSigmList[i, , ] <- res$sigm
-        TestPred[i, ] <- res$pred
-        utils::setTxtProgressBar(pb, i)
-        if (i %% 10 == 0 || i == n_samples) {
-          tape_log("High-resolution sample %d/%d finished", i, n_samples, start_time = pred_start)
+ 
+      for (s in starts) {
+        e <- min(s + chunk_size - 1L, n_samples)
+ 
+        res <- tape_adaptive_chunk(
+          model = model,
+          chunk_x = test_x[s:e, , drop = FALSE],
+          step = 300L,
+          max_iter = 3L
+        )
+ 
+        TestPred[s:e, ] <- res$pred
+        TestSigmList[s:e, , ] <- res$sigm
+ 
+        utils::setTxtProgressBar(pb, e)
+        tape_log("High-resolution sample %d/%d finished", e, n_samples,
+                 start_time = pred_start)
+ 
+        rm(res)
+        gc(verbose = FALSE)
+ 
+        if (cuda_is_available()) {
+          try(cuda_empty_cache(), silent = TRUE)
         }
       }
-
+ 
       close(pb)
-
+ 
       TestPred <- as.data.frame(TestPred)
       colnames(TestPred) <- celltypes
       rownames(TestPred) <- samplename
-
+ 
       CellTypeSigm <- list()
       for (j in seq_along(celltypes)) {
         sigm_df <- as.data.frame(TestSigmList[, j, ])
@@ -1041,36 +1077,41 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
         rownames(sigm_df) <- samplename
         CellTypeSigm[[celltypes[j]]] <- sigm_df
       }
-
+ 
       tape_log("Prediction finished", start_time = pred_start)
       return(list(sigm = CellTypeSigm, pred = TestPred))
-
+ 
     } else if (mode == "overall") {
       tape_log("Start adaptive training for all samples", start_time = pred_start)
+ 
       res <- tape_adaptive_stage(model, test_x, step = 300L, max_iter = 3L,
                                  verbose = TRUE)
-
+ 
       sigm <- as.data.frame(res$sigm)
       colnames(sigm) <- genename
       rownames(sigm) <- celltypes
-
+ 
       pred <- as.data.frame(res$pred)
       colnames(pred) <- celltypes
       rownames(pred) <- samplename
-
+ 
       tape_log("Prediction finished", start_time = pred_start)
       return(list(sigm = sigm, pred = pred))
     }
   } else {
-    tape_log("Predicting cell fractions without adaptive training", start_time = pred_start)
+    tape_log("Predicting cell fractions without adaptive training",
+             start_time = pred_start)
+ 
     dev <- if (cuda_is_available()) "cuda" else "cpu"
     model$encoder$eval()
     model$decoder$eval()
     data <- torch_tensor(test_x, device = dev)
-    out <- tape_forward(model, data, state = "test")
+    out <- with_no_grad(tape_forward(model, data, state = "test"))
+ 
     pred <- as.data.frame(as.matrix(out$z$cpu()$detach()))
     colnames(pred) <- celltypes
     rownames(pred) <- samplename
+ 
     tape_log("Prediction finished", start_time = pred_start)
     return(list(sigm = NULL, pred = pred))
   }
@@ -1233,3 +1274,317 @@ tape <- function(sc_data, real_bulk,
 
   result
 }
+
+
+
+
+
+#' Refract latent scores for an ensemble of TAPE models
+#'
+#' Internal helper that rectifies and row-normalizes batched latent scores.
+#'
+#' @param z A `torch_tensor` of shape `(B, 1, celltypes)`.
+#'
+#' @return A `torch_tensor` of the same shape.
+#'
+#' @importFrom torch nnf_relu
+#' @keywords internal
+#' @noRd
+tape_batched_refract <- function(z) {
+  z <- nnf_relu(z)
+  z / z$sum(dim = 3, keepdim = TRUE)
+}
+ 
+ 
+#' Adapt a chunk of samples as an ensemble of independent TAPE models
+#'
+#' Internal helper that performs per-sample adaptive refinement for several
+#' samples at once, each with its own copy of the trained model.
+#'
+#' @param model A trained TAPE model. The model is read only and is left
+#'   unmodified.
+#' @param chunk_x Numeric matrix with samples in rows and genes in columns.
+#' @param step Integer scalar. Number of optimization steps per sub-stage.
+#' @param max_iter Integer scalar. Number of alternating refinement rounds.
+#'
+#' @return A named list with components:
+#' \describe{
+#'   \item{pred}{Numeric matrix of predicted proportions, samples by cell types.}
+#'   \item{sigm}{Numeric array of adapted signature matrices with dimensions
+#'   samples by cell types by genes.}
+#' }
+#'
+#' @details
+#' Ensemble member `b` sees only sample `b`, so its gradients depend on no other
+#' sample provided the loss is reduced per member before being summed. Each loss
+#' term is averaged over the elements belonging to one member, reproducing the
+#' gradient scale a lone model would receive, and the per-member losses are then
+#' summed so that the batch is a concatenation of independent problems.
+#'
+#' Parameters and optimizers are constructed fresh for every chunk, reproducing
+#' the per-sample model reload and the per-sample optimizer state of the
+#' reference implementation.
+#'
+#' @importFrom torch cuda_is_available torch_tensor optim_adam torch_bmm
+#'   with_no_grad
+#' @keywords internal
+#' @noRd
+tape_adaptive_chunk <- function(model, chunk_x, step = 300L, max_iter = 3L) {
+  dev <- if (cuda_is_available()) "cuda" else "cpu"
+ 
+  B <- nrow(chunk_x)
+  data <- torch_tensor(chunk_x, device = dev)$unsqueeze(2)
+ 
+  params <- tape_batchify(model, B)
+  EW <- params$EW
+  EB <- params$EB
+  DW <- params$DW
+ 
+  masks <- lapply(
+    tape_make_masks(
+      dims = c(ncol(chunk_x), 512L, 256L, 128L),
+      n_rows = 1L,
+      dev = dev
+    ),
+    function(m) m$unsqueeze(1)
+  )
+ 
+  anchors <- with_no_grad({
+    list(
+      pred = tape_batched_refract(
+        tape_batched_encode(data, EW, EB, masks = NULL)
+      )$clone(),
+      sigm = tape_batched_sigmatrix(DW)$clone()
+    )
+  })
+ 
+  optD <- optim_adam(DW, lr = 1e-4)
+  optE <- optim_adam(c(EW, EB), lr = 1e-4)
+ 
+  per_member_mean <- function(x) {
+    x$abs()$mean(dim = 3L)$mean(dim = 2L)
+  }
+ 
+  for (k in seq_len(max_iter)) {
+    z_fixed <- with_no_grad(tape_batched_encode(data, EW, EB, masks))
+ 
+    for (i in seq_len(step)) {
+      optD$zero_grad()
+      sigm <- tape_batched_sigmatrix(DW)
+      loss <- (
+        per_member_mean(torch_bmm(z_fixed, sigm) - data) +
+          per_member_mean(sigm - anchors$sigm)
+      )$sum()
+      loss$backward()
+      optD$step()
+    }
+ 
+    rm(z_fixed)
+    sigm_fixed <- with_no_grad(tape_batched_sigmatrix(DW))
+ 
+    for (i in seq_len(step)) {
+      optE$zero_grad()
+      z <- tape_batched_encode(data, EW, EB, masks)
+      loss <- (
+        per_member_mean(anchors$pred - z) +
+          per_member_mean(torch_bmm(z, sigm_fixed) - data)
+      )$sum()
+      loss$backward()
+      optE$step()
+    }
+ 
+    rm(sigm_fixed)
+  }
+ 
+  final <- with_no_grad({
+    list(
+      pred = tape_batched_refract(
+        tape_batched_encode(data, EW, EB, masks = NULL)
+      ),
+      sigm = tape_batched_sigmatrix(DW)
+    )
+  })
+ 
+  list(
+    pred = as.matrix(final$pred$squeeze(2)$cpu()$detach()),
+    sigm = as.array(final$sigm$cpu()$detach())
+  )
+}
+
+
+#' Compute signature matrices for an ensemble of TAPE models
+#'
+#' Internal helper that collapses batched decoder weights into one non-negative
+#' signature matrix per ensemble member.
+#'
+#' @param DW A list of five batched decoder weight tensors.
+#'
+#' @return A `torch_tensor` of shape `(B, celltypes, genes)`.
+#'
+#' @importFrom torch torch_bmm nnf_relu
+#' @keywords internal
+#' @noRd
+tape_batched_sigmatrix <- function(DW) {
+  w <- torch_bmm(DW[[1]], DW[[2]])
+  w <- torch_bmm(w, DW[[3]])
+  w <- torch_bmm(w, DW[[4]])
+  w <- torch_bmm(w, DW[[5]])
+  nnf_relu(w)
+}
+ 
+ 
+#' Encode with an ensemble of TAPE encoders
+#'
+#' Internal helper that applies `B` independent encoders to `B` samples in one
+#' batched forward pass.
+#'
+#' @param x A `torch_tensor` of shape `(B, 1, genes)`.
+#' @param EW A list of five batched encoder weight tensors.
+#' @param EB A list of five batched encoder bias tensors.
+#' @param masks A list of four masks broadcastable over the batch dimension, or
+#'   `NULL` to encode without dropout.
+#'
+#' @return A `torch_tensor` of shape `(B, 1, celltypes)`.
+#'
+#' @importFrom torch torch_bmm nnf_celu
+#' @keywords internal
+#' @noRd
+tape_batched_encode <- function(x, EW, EB, masks = NULL) {
+  h <- x
+ 
+  for (l in 1:4) {
+    if (!is.null(masks)) {
+      h <- h * masks[[l]]
+    }
+    h <- nnf_celu(torch_bmm(h, EW[[l]]) + EB[[l]])
+  }
+ 
+  torch_bmm(h, EW[[5]]) + EB[[5]]
+}
+
+
+#' Expand TAPE parameters into an independent ensemble
+#'
+#' Internal helper that replicates the encoder and decoder weights of a trained
+#' TAPE model into leading-dimension tensors, giving `B` independent copies that
+#' can be adapted simultaneously.
+#'
+#' @param model A trained TAPE model. The model is read only.
+#' @param B Integer scalar. Number of ensemble members.
+#'
+#' @return A named list with `EW`, `EB`, and `DW`, each a list of leaf tensors
+#'   with `requires_grad` enabled.
+#'
+#' @details
+#' Encoder weights are stored transposed with shape `(B, in, out)` and biases
+#' with shape `(B, 1, out)`, so that a forward pass becomes a batched matrix
+#' product. Transposition permutes elements, and Adam updates each element
+#' independently, so an optimizer running over these tensors performs exactly the
+#' updates that `B` separate optimizers would perform on `B` separate models.
+#'
+#' @keywords internal
+#' @noRd
+tape_batchify <- function(model, B) {
+  B <- as.integer(B)
+  linears <- tape_encoder_linear_index()
+ 
+  EW <- lapply(linears, function(i) {
+    model$encoder[[i]]$weight$detach()$t()$unsqueeze(1)$
+      expand(c(B, -1L, -1L))$contiguous()$requires_grad_(TRUE)
+  })
+ 
+  EB <- lapply(linears, function(i) {
+    model$encoder[[i]]$bias$detach()$view(c(1L, 1L, -1L))$
+      expand(c(B, 1L, -1L))$contiguous()$requires_grad_(TRUE)
+  })
+ 
+  DW <- lapply(1:5, function(i) {
+    model$decoder[[i]]$weight$detach()$t()$unsqueeze(1)$
+      expand(c(B, -1L, -1L))$contiguous()$requires_grad_(TRUE)
+  })
+ 
+  list(EW = EW, EB = EB, DW = DW)
+}
+
+
+#' Positions of the linear layers inside the TAPE encoder
+#'
+#' Internal helper returning the indices of the five `nn_linear` modules within
+#' the encoder built by [tape_create_model()].
+#'
+#' @return An integer vector of length five.
+#'
+#' @keywords internal
+#' @noRd
+tape_encoder_linear_index <- function() {
+  c(2L, 5L, 8L, 11L, 13L)
+}
+ 
+ 
+#' Draw fixed dropout masks for the TAPE adaptive stage
+#'
+#' Internal helper that draws the four encoder dropout masks a single time.
+#'
+#' @param dims Integer vector of length four giving the feature dimension seen by
+#'   each encoder dropout layer, in forward order.
+#' @param n_rows Integer scalar. Number of rows the masks are drawn for. Use the
+#'   number of samples in the batch for overall adaptation, or `1` when masks are
+#'   broadcast across an ensemble of single-sample models.
+#' @param dev Character scalar. Torch device the masks are allocated on.
+#' @param seed Integer scalar. Seed used for the draw.
+#'
+#' @return A list of four `torch_tensor` multiplicative masks.
+#'
+#' @details
+#' The reference implementation reseeds both the CPU and CUDA generators before
+#' every optimization step of its adaptive stage, so the same four masks are
+#' drawn at each of the `2 * step * max_iter` steps. Drawing them once is an
+#' exact restatement of that behaviour rather than an approximation, and it
+#' removes any dependence on whether a given torch build propagates a manual seed
+#' to the CUDA generator.
+#'
+#' @importFrom torch torch_manual_seed torch_ones nnf_dropout
+#' @keywords internal
+#' @noRd
+tape_make_masks <- function(dims, n_rows, dev, seed = 0L) {
+  torch_manual_seed(seed)
+ 
+  lapply(dims, function(d) {
+    nnf_dropout(
+      torch_ones(c(as.integer(n_rows), as.integer(d)), device = dev),
+      p = 0.5,
+      training = TRUE
+    )
+  })
+}
+ 
+ 
+#' Encode with externally supplied dropout masks
+#'
+#' Internal helper that runs the TAPE encoder while substituting precomputed
+#' multiplicative masks for its `nn_dropout` modules.
+#'
+#' @param encoder The encoder module of a TAPE model.
+#' @param x A `torch_tensor` with samples in rows and genes in columns.
+#' @param masks A list of four masks as returned by [tape_make_masks()], or
+#'   `NULL` to encode without dropout.
+#'
+#' @return A `torch_tensor` of latent cell-type scores.
+#'
+#' @importFrom torch nnf_celu
+#' @keywords internal
+#' @noRd
+tape_masked_encode <- function(encoder, x, masks = NULL) {
+  linears <- tape_encoder_linear_index()
+  h <- x
+ 
+  for (l in 1:4) {
+    if (!is.null(masks)) {
+      h <- h * masks[[l]]
+    }
+    h <- nnf_celu(encoder[[linears[l]]](h))
+  }
+ 
+  encoder[[linears[5]]](h)
+}
+

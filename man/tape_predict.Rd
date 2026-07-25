@@ -11,7 +11,8 @@ tape_predict(
   celltypes,
   samplename,
   adaptive = TRUE,
-  mode = "overall"
+  mode = "overall",
+  chunk_size = 16L
 )
 }
 \arguments{
@@ -28,12 +29,16 @@ tape_predict(
 \item{adaptive}{Logical scalar. Whether to run adaptive refinement.}
 
 \item{mode}{Character scalar. Either `"overall"` or `"high-resolution"`.}
+
+\item{chunk_size}{Integer scalar. Number of samples adapted simultaneously in
+high-resolution mode.}
 }
 \value{
 A named list with components:
 \describe{
-  \item{sigm}{Either `NULL`, a signature matrix data frame, or a named list
-  of per-cell-type signature matrices depending on `adaptive` and `mode`.}
+  \item{sigm}{A named list of per-cell-type signature matrices in
+  high-resolution mode, a signature matrix data frame in overall adaptive
+  mode, and `NULL` when `adaptive` is `FALSE`.}
   \item{pred}{A data frame of predicted proportions with samples in rows and
   cell types in columns.}
 }
@@ -43,18 +48,21 @@ Applies a trained TAPE model to processed bulk data, optionally with adaptive
 refinement in either overall or high-resolution mode.
 }
 \details{
-This function implements TAPE prediction and optional tissue-adaptive
-refinement as described by Chen et al. (2022), following the workflow used
-in the original PyTorch implementation.
+High-resolution mode adapts every sample with its own copy of the trained
+model, and processes `chunk_size` samples concurrently as an ensemble of
+independent models. The supplied model is read only in this mode and is
+returned unmodified.
 }
 \examples{
 \dontrun{
-pred <- tape_predict(
+res <- tape_predict(
   model = model,
   test_x = processed$test_x,
   genename = processed$genename,
   celltypes = processed$celltypes,
-  samplename = processed$samplename
+  samplename = processed$samplename,
+  mode = "high-resolution",
+  chunk_size = 16L
 )
 }
 }
