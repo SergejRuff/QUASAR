@@ -194,7 +194,6 @@ quasar_h5_read_dataframe <- function(filename, name, index_as_column = FALSE) {
 #'
 #' @return a dense base matrix or a sparse \code{dgCMatrix}.
 #' @export
-#' @import Matrix
 quasar_h5_read_matrix <- function(filename, name) {
   if (!startsWith(name, "/")) name <- paste0("/", name)
   attr <- rhdf5::h5readAttributes(filename, name)
@@ -264,7 +263,6 @@ quasar_h5_read_matrix <- function(filename, name) {
 #'
 #' @return a \code{Seurat} or \code{SingleCellExperiment} object.
 #' @export
-#' @import Matrix
 #' @examples
 #' \dontrun{
 #' ## Round-trip on tiny data: write a small bulk matrix, then read it back.
@@ -434,7 +432,6 @@ quasar_build_seurat <- function(X, obs, var, obsm, assay) {
 #'
 #' @return (invisibly) the output \code{filename}.
 #' @export
-#' @import Matrix
 #' @examples
 #' \dontrun{
 #' ## --- tiny bulk export (6 samples x 20 genes) + ground-truth fractions ----
