@@ -1000,7 +1000,7 @@ tape_adaptive_stage <- function(model, data_np, step = 300L, max_iter = 5L,
 #' independent models. The supplied model is read only in this mode and is
 #' returned unmodified.
 #'
-#' @importFrom torch cuda_is_available cuda_empty_cache torch_tensor with_no_grad
+#' @importFrom torch cuda_is_available  torch_tensor with_no_grad
 #' @examples
 #' \dontrun{
 #' res <- tape_predict(
@@ -1058,10 +1058,7 @@ tape_predict <- function(model, test_x, genename, celltypes, samplename,
  
         rm(res)
         gc(verbose = FALSE)
- 
-        if (cuda_is_available()) {
-          try(cuda_empty_cache(), silent = TRUE)
-        }
+
       }
  
       close(pb)
@@ -1325,8 +1322,7 @@ tape_batched_refract <- function(z) {
 #' the per-sample model reload and the per-sample optimizer state of the
 #' reference implementation.
 #'
-#' @importFrom torch cuda_is_available torch_tensor optim_adam torch_bmm
-#'   with_no_grad
+#' @importFrom torch cuda_is_available torch_tensor torch_bmm with_no_grad
 #' @keywords internal
 #' @noRd
 tape_adaptive_chunk <- function(model, chunk_x, step = 300L, max_iter = 3L) {
@@ -1358,8 +1354,8 @@ tape_adaptive_chunk <- function(model, chunk_x, step = 300L, max_iter = 3L) {
     )
   })
  
-  optD <- optim_adam(DW, lr = 1e-4)
-  optE <- optim_adam(c(EW, EB), lr = 1e-4)
+  optD <- tape_fused_adam(DW, lr = 1e-4)
+  optE <- tape_fused_adam(c(EW, EB), lr = 1e-4)
  
   per_member_mean <- function(x) {
     x$abs()$mean(dim = 3L)$mean(dim = 2L)
@@ -1588,3 +1584,103 @@ tape_masked_encode <- function(encoder, x, masks = NULL) {
   encoder[[linears[5]]](h)
 }
 
+#' Fused Adam optimizer for TAPE
+#'
+#' Minimal Adam optimizer that performs the entire parameter update in a single
+#' fused CUDA kernel via `torch__fused_adam_()`.
+#'
+#' @param params A `torch_tensor` or a list of `torch_tensor` leaves with
+#'   `requires_grad` enabled.
+#' @param lr Numeric scalar. Learning rate.
+#' @param beta1 Numeric scalar. Exponential decay rate for the first moment.
+#' @param beta2 Numeric scalar. Exponential decay rate for the second moment.
+#' @param eps Numeric scalar. Term added to the denominator for stability.
+#' @param weight_decay Numeric scalar. L2 penalty.
+#'
+#' @return A list with components `zero_grad` and `step`, both functions of no
+#'   arguments, plus `params` for inspection.
+#'
+#' @details
+#' Implements the same update as [torch::optim_adam()] with default arguments,
+#' but replaces the R-level loop over parameters and its roughly ten separate
+#' elementwise kernels with one fused kernel per call. On the large batched
+#' tensors used by [tape_adaptive_chunk()] the optimizer step is bandwidth
+#' bound, so the reduction in passes over memory dominates.
+#'
+#' Step counters are held as device-resident float tensors, one per parameter,
+#' and are incremented before the fused call so that bias correction sees a step
+#' count of one on the first update.
+#'
+#' @importFrom torch torch_zeros_like torch_zeros torch_float
+#'   torch__foreach_add_ torch__fused_adam_
+#' @keywords internal
+#' @noRd
+tape_fused_adam <- function(params,
+                            lr = 1e-4,
+                            beta1 = 0.9,
+                            beta2 = 0.999,
+                            eps = 1e-8,
+                            weight_decay = 0) {
+
+  if (inherits(params, "torch_tensor")) {
+    params <- list(params)
+  }
+
+  params <- unname(params)
+
+  if (length(params) == 0L) {
+    stop("`params` is empty.")
+  }
+
+  exp_avgs    <- lapply(params, torch_zeros_like)
+  exp_avg_sqs <- lapply(params, torch_zeros_like)
+
+  state_steps <- lapply(params, function(p) {
+    torch_zeros(1, dtype = torch_float(), device = p$device)
+  })
+
+  max_exp_avg_sqs <- list()
+
+  zero_grad <- function() {
+    for (p in params) {
+      if (!is.null(p$grad)) {
+        p$grad$zero_()
+      }
+    }
+    invisible(NULL)
+  }
+
+  step <- function() {
+    grads <- lapply(params, function(p) p$grad)
+
+    if (any(vapply(grads, is.null, logical(1)))) {
+      stop("tape_fused_adam: at least one parameter has no gradient.")
+    }
+
+    torch__foreach_add_(state_steps, 1)
+
+    torch__fused_adam_(
+      params,
+      grads,
+      exp_avgs,
+      exp_avg_sqs,
+      max_exp_avg_sqs,
+      state_steps,
+      lr,
+      beta1,
+      beta2,
+      weight_decay,
+      eps,
+      FALSE,
+      FALSE
+    )
+
+    invisible(NULL)
+  }
+
+  list(
+    params = params,
+    zero_grad = zero_grad,
+    step = step
+  )
+}
