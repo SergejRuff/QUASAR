@@ -977,7 +977,7 @@ dissect_resolve_device <- function(device = c("auto", "cpu", "cuda"),
 #' Original DISSECT software repository:
 #' \url{https://github.com/imsb-uke/DISSECT}
 #' @importFrom stats runif
-#' @importFrom torch torch_tensor torch_float32 nn_module nn_module_list nn_linear nn_dropout nnf_relu nnf_softmax torch_sigmoid torch_tanh torch_clamp optim_adam with_no_grad torch_mean torch_sum torch_log torch_abs torch_manual_seed  cuda_synchronize torch_device
+#' @importFrom torch torch_tensor torch_float32 nn_module nn_module_list nn_linear nn_dropout nnf_relu nnf_softmax torch_sigmoid torch_tanh torch_clamp optim_adam with_no_grad torch_mean torch_sum torch_log torch_abs torch_manual_seed  cuda_synchronize torch_device nn_init_zeros_
 #' @examples
 #' \dontrun{
 #' prop <- dissect_prop(
