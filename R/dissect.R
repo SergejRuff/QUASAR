@@ -84,7 +84,7 @@ dissect_extract_sc_data <- function(sc_data,
 #' @keywords internal
 #' @noRd
 dissect_normalize_per_batch_torch <- function(x, epsilon = 1e-8) {
-  x1 <- torch_log1p(x) / log(2)
+  x1 <- torch_log1p(x)
   min_vals <- x1$min(dim = 2, keepdim = TRUE)[[1]]
   max_vals <- x1$max(dim = 2, keepdim = TRUE)[[1]]
   (x1 - min_vals) / (max_vals - min_vals + epsilon)
@@ -1140,7 +1140,10 @@ dissect_prop <- function(bulk = NULL,
 
       in_features <- n_features
       for (i in seq_len(n_hidden_layers)) {
-        self$hidden$append(nn_linear(in_features, hidden_units[i]))
+        lin <- nn_linear(in_features, hidden_units[i])
+        nn_init_xavier_uniform_(lin$weight)
+        nn_init_zeros_(lin$bias)
+        self$hidden$append(lin)
         if (is.null(dropout)) {
           self$drop$append(nn_dropout(p = 0))
         } else {
@@ -1150,6 +1153,8 @@ dissect_prop <- function(bulk = NULL,
       }
 
       self$out <- nn_linear(in_features, n_celltypes)
+      nn_init_xavier_uniform_(self$out$weight)
+      nn_init_zeros_(self$out$bias)
     },
     forward_hidden = function(x) {
       for (i in seq_len(n_hidden_layers)) {
@@ -1186,7 +1191,7 @@ dissect_prop <- function(bulk = NULL,
     model <- DissectNet()
     model <- model$to(device = device_obj)
 
-    optimizer <- optim_adam(model$parameters, lr = lr)
+    optimizer <- optim_adam(model$parameters, lr = lr, eps = 1e-7)
     model$train()
 
     shuffle_buffer <- min(1000L, n_rows)
@@ -1257,8 +1262,10 @@ dissect_prop <- function(bulk = NULL,
       y_hat_mix <- model(x_mix_n)
 
       if (loss == "kldivergence") {
+        y_true_c <- torch_clamp(y_sim_batch, min = 1e-7, max = 1)
+        y_pred_c <- torch_clamp(y_hat_sim, min = 1e-7, max = 1)
         reg_loss <- torch_mean(torch_sum(
-          y_sim_batch * (torch_log(y_sim_batch + 1e-10) - torch_log(y_hat_sim + 1e-10)),
+          y_true_c * (torch_log(y_true_c) - torch_log(y_pred_c)),
           dim = 2
         ))
       } else if (loss == "l2") {
