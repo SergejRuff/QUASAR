@@ -1447,7 +1447,7 @@ dissect_prop <- function(bulk = NULL,
 #' \url{https://github.com/imsb-uke/DISSECT}
 #' 
 #' @importFrom stats setNames quantile runif
-#' @importFrom torch torch_tensor torch_float32 nn_module nn_linear nnf_relu torch_cat torch_randn_like torch_exp torch_mean torch_sum optim_adam with_no_grad torch_manual_seed cuda_synchronize torch_device
+#' @importFrom torch torch_tensor torch_float32 nn_module nn_linear nnf_relu torch_cat torch_randn_like torch_exp torch_mean torch_sum optim_adam with_no_grad torch_manual_seed cuda_synchronize torch_device nn_init_xavier_uniform_ 
 #' @examples
 #' \dontrun{
 #' expr <- dissect_expr(
@@ -1627,6 +1627,12 @@ dissect_expr <- function(bulk = NULL,
       self$dense_proj3 <- nn_linear(200, 200)
       self$dense_mean <- nn_linear(200, latent_dim)
       self$dense_log_var <- nn_linear(200, latent_dim)
+
+      for (lin in list(self$dense_proj2, self$dense_proj3,
+                       self$dense_mean, self$dense_log_var)) {
+        nn_init_xavier_uniform_(lin$weight)
+        torch::nn_init_zeros_(lin$bias)
+      }
     },
     forward = function(inputs) {
       x <- nnf_relu(self$dense_proj2(inputs))
@@ -1644,6 +1650,11 @@ dissect_expr <- function(bulk = NULL,
       self$dense_proj5 <- nn_linear(latent_dim + n_ct, 200)
       self$dense_proj6 <- nn_linear(200, 200)
       self$dense_output <- nn_linear(200, n_genes)
+
+      for (lin in list(self$dense_proj5, self$dense_proj6, self$dense_output)) {
+        nn_init_xavier_uniform_(lin$weight)
+        torch::nn_init_zeros_(lin$bias)
+      }
     },
     forward = function(inputs, labels) {
       x <- torch_cat(list(inputs, labels), dim = 2)
@@ -1671,7 +1682,7 @@ dissect_expr <- function(bulk = NULL,
   vae <- VAE()
   vae <- vae$to(device = device_obj)
 
-  optimizer <- optim_adam(vae$parameters, lr = lr)
+  optimizer <- optim_adam(vae$parameters, lr = lr, eps = 1e-7)
   mse_loss_fn <- function(pred, target) torch_sum(torch_mean((pred - target)^2, dim = 2))
 
   expand_flat_indices <- function(flat_idx, n_ct) {
