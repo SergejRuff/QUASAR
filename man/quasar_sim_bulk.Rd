@@ -2,12 +2,16 @@
 % Please edit documentation in R/quasar_sim_bulk.R
 \name{quasar_sim_bulk}
 \alias{quasar_sim_bulk}
-\title{Simulate pseudo-bulk RNA-seq profiles from single-cell data}
+\title{Simulate pseudo-bulk or spatial transcriptomics profiles from single-cell data}
 \usage{
 quasar_sim_bulk(
   ...,
   n_bulk_samples = NULL,
   cells_per_bulk = 500,
+  mode = c("bulk", "spatial"),
+  cells_per_spot_range = c(5L, 11L),
+  celltypes_per_spot_range = c(1L, 5L),
+  spatial_background = 1e-06,
   cell_type_column = "cell_type",
   patient_id_column = NULL,
   select_ct = NULL,
@@ -39,7 +43,30 @@ quasar_sim_bulk(
 generated.}
 
 \item{cells_per_bulk}{Integer number of cells pooled into each pseudo-bulk
-sample. Default \code{500}.}
+sample. Default \code{500}. Ignored when \code{mode = "spatial"}, where
+the pool size is drawn per spot from
+\code{cells_per_spot_range}.}
+
+\item{mode}{Character scalar selecting the simulation type. \code{"bulk"}
+(default) pools \code{cells_per_bulk} cells per sample from a symmetric
+Dirichlet over all cell types. \code{"spatial"} emulates spot-level
+transcriptomics: each spot keeps only a few cell types and pools a small,
+randomly drawn number of cells.}
+
+\item{cells_per_spot_range}{Integer vector of length two giving the inclusive
+range from which the number of cells per spot is drawn uniformly when
+\code{mode = "spatial"}. Default \code{c(5, 11)}.}
+
+\item{celltypes_per_spot_range}{Integer vector of length two giving the
+inclusive range from which the number of cell types present in a spot is
+drawn uniformly when \code{mode = "spatial"}. Default \code{c(1, 5)},
+capped at the number of available cell types.}
+
+\item{spatial_background}{Numeric scalar giving the Dirichlet concentration
+assigned to cell types that are \emph{not} selected for a spot when
+\code{mode = "spatial"}. A small positive value leaves trace amounts
+rather than exact zeros, which is what the reference implementation does.
+Default \code{1e-6}.}
 
 \item{cell_type_column}{Name of the metadata column holding cell-type labels.
 Default \code{"cell_type"}.}
@@ -96,6 +123,9 @@ A named list containing:
       \code{n_bulk_samples} matrix of summed pseudo-bulk counts.}
     \item{\code{ground_truth_proportions}}{\code{n_bulk_samples} \eqn{\times}
       cell-types matrix of realized proportions (rows sum to 1).}
+    \item{\code{cells_per_sample}}{Integer vector giving the realized number
+      of cells pooled into each sample. Constant in bulk mode, variable in
+      spatial mode.}
     \item{\code{used_samples_by_ct}}{(if \code{return_used_samples}) list of
       length \code{n_bulk_samples}, each a per-cell-type list of drawn cell
       indices.}
@@ -114,15 +144,30 @@ A named list containing:
 \description{
 Generates pseudo-bulk expression profiles by sampling cells from a
 single-cell reference according to Dirichlet-drawn cell-type fractions.
+With \code{mode = "spatial"} the same machinery produces spot-level profiles
+instead, pooling only a handful of cells per spot and restricting each spot to
+a small number of cell types.
 Optionally returns per-cell-type signature profiles and a global signature matrix.
 }
 \details{
-Cell-type fractions are drawn from a symmetric Dirichlet, optionally modified
-by the \code{sparse}/\code{rare} masks, renormalised per sample, and turned
-into integer cell counts (each bulk is guaranteed at least one cell).
-Cells are then sampled with replacement from the reference and summed to form each pseudo-bulk,
-so the returned \code{ground_truth_proportions} reflect the *realized* allocations rather
-than the raw Dirichlet draws.
+In \code{mode = "bulk"}, cell-type fractions are drawn from a symmetric
+Dirichlet, optionally modified by the \code{sparse}/\code{rare} masks,
+renormalised per sample, and turned into integer cell counts by
+\code{floor(fraction * cells_per_bulk)} (each bulk is guaranteed at least one
+cell).
+
+In \code{mode = "spatial"}, each spot first draws how many cell types it
+contains, then a Dirichlet whose concentration is \code{dirich_alpha} for the
+selected types and \code{spatial_background} for the rest. The number of
+cells in the spot is drawn uniformly from \code{cells_per_spot_range} and
+allocated by \code{round(fraction * n_cells)} rather than \code{floor},
+because flooring a handful of cells would empty most spots. The
+\code{sparse} and \code{rare} arguments are ignored in this mode, since
+sparsity is already imposed by the per-spot cell-type selection.
+
+In both modes cells are then sampled with replacement from the reference and
+summed, so the returned \code{ground_truth_proportions} reflect the
+*realized* allocations rather than the raw Dirichlet draws.
 }
 \examples{
 
@@ -157,6 +202,18 @@ res <- quasar_sim_bulk(
 dim(res$bulk_expression_profiles)   # 1000 x 50
 head(res$ground_truth_proportions)  # rows sum to 1
 dim(res$global_signature_matrix)    # 1000 x 3
+
+## Spatial spots: few cells and few cell types per spot
+spots <- quasar_sim_bulk(
+  counts, meta,
+  n_bulk_samples = 200,
+  mode           = "spatial",
+  verbose        = TRUE
+)
+
+dim(spots$bulk_expression_profiles)  # 1000 x 200
+range(spots$cells_per_sample)        # within cells_per_spot_range
+table(rowSums(spots$ground_truth_proportions > 0))
 
 
 }

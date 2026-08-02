@@ -1,7 +1,10 @@
-#' Simulate pseudo-bulk RNA-seq profiles from single-cell data
+#' Simulate pseudo-bulk or spatial transcriptomics profiles from single-cell data
 #'
 #' Generates pseudo-bulk expression profiles by sampling cells from a
 #' single-cell reference according to Dirichlet-drawn cell-type fractions.
+#' With \code{mode = "spatial"} the same machinery produces spot-level profiles
+#' instead, pooling only a handful of cells per spot and restricting each spot to
+#' a small number of cell types.
 #' Optionally returns per-cell-type signature profiles and a global signature matrix.
 #'
 #' @param ... The single-cell reference, supplied in one of two forms:
@@ -17,7 +20,26 @@
 #'   \code{NULL} (default), \code{1000 * (number of cell types)} samples are
 #'   generated.
 #' @param cells_per_bulk Integer number of cells pooled into each pseudo-bulk
-#'   sample. Default \code{500}.
+#'   sample. Default \code{500}. Ignored when \code{mode = "spatial"}, where
+#'   the pool size is drawn per spot from
+#'   \code{cells_per_spot_range}.
+#' @param mode Character scalar selecting the simulation type. \code{"bulk"}
+#'   (default) pools \code{cells_per_bulk} cells per sample from a symmetric
+#'   Dirichlet over all cell types. \code{"spatial"} emulates spot-level
+#'   transcriptomics: each spot keeps only a few cell types and pools a small,
+#'   randomly drawn number of cells.
+#' @param cells_per_spot_range Integer vector of length two giving the inclusive
+#'   range from which the number of cells per spot is drawn uniformly when
+#'   \code{mode = "spatial"}. Default \code{c(5, 11)}.
+#' @param celltypes_per_spot_range Integer vector of length two giving the
+#'   inclusive range from which the number of cell types present in a spot is
+#'   drawn uniformly when \code{mode = "spatial"}. Default \code{c(1, 5)},
+#'   capped at the number of available cell types.
+#' @param spatial_background Numeric scalar giving the Dirichlet concentration
+#'   assigned to cell types that are \emph{not} selected for a spot when
+#'   \code{mode = "spatial"}. A small positive value leaves trace amounts
+#'   rather than exact zeros, which is what the reference implementation does.
+#'   Default \code{1e-6}.
 #' @param cell_type_column Name of the metadata column holding cell-type labels.
 #'   Default \code{"cell_type"}.
 #' @param patient_id_column Optional name of a metadata column holding
@@ -55,12 +77,24 @@
 #'   bars, and timing summary. If \code{FALSE}, nothing is printed.
 #'
 #' @details
-#' Cell-type fractions are drawn from a symmetric Dirichlet, optionally modified
-#' by the \code{sparse}/\code{rare} masks, renormalised per sample, and turned
-#' into integer cell counts (each bulk is guaranteed at least one cell).
-#' Cells are then sampled with replacement from the reference and summed to form each pseudo-bulk,
-#' so the returned \code{ground_truth_proportions} reflect the *realized* allocations rather
-#' than the raw Dirichlet draws.
+#' In \code{mode = "bulk"}, cell-type fractions are drawn from a symmetric
+#' Dirichlet, optionally modified by the \code{sparse}/\code{rare} masks,
+#' renormalised per sample, and turned into integer cell counts by
+#' \code{floor(fraction * cells_per_bulk)} (each bulk is guaranteed at least one
+#' cell).
+#'
+#' In \code{mode = "spatial"}, each spot first draws how many cell types it
+#' contains, then a Dirichlet whose concentration is \code{dirich_alpha} for the
+#' selected types and \code{spatial_background} for the rest. The number of
+#' cells in the spot is drawn uniformly from \code{cells_per_spot_range} and
+#' allocated by \code{round(fraction * n_cells)} rather than \code{floor},
+#' because flooring a handful of cells would empty most spots. The
+#' \code{sparse} and \code{rare} arguments are ignored in this mode, since
+#' sparsity is already imposed by the per-spot cell-type selection.
+#'
+#' In both modes cells are then sampled with replacement from the reference and
+#' summed, so the returned \code{ground_truth_proportions} reflect the
+#' *realized* allocations rather than the raw Dirichlet draws.
 #'
 #'
 #' @return A named list containing:
@@ -69,6 +103,9 @@
 #'       \code{n_bulk_samples} matrix of summed pseudo-bulk counts.}
 #'     \item{\code{ground_truth_proportions}}{\code{n_bulk_samples} \eqn{\times}
 #'       cell-types matrix of realized proportions (rows sum to 1).}
+#'     \item{\code{cells_per_sample}}{Integer vector giving the realized number
+#'       of cells pooled into each sample. Constant in bulk mode, variable in
+#'       spatial mode.}
 #'     \item{\code{used_samples_by_ct}}{(if \code{return_used_samples}) list of
 #'       length \code{n_bulk_samples}, each a per-cell-type list of drawn cell
 #'       indices.}
@@ -117,17 +154,33 @@
 #' dim(res$bulk_expression_profiles)   # 1000 x 50
 #' head(res$ground_truth_proportions)  # rows sum to 1
 #' dim(res$global_signature_matrix)    # 1000 x 3
+#'
+#' ## Spatial spots: few cells and few cell types per spot
+#' spots <- quasar_sim_bulk(
+#'   counts, meta,
+#'   n_bulk_samples = 200,
+#'   mode           = "spatial",
+#'   verbose        = TRUE
+#' )
+#'
+#' dim(spots$bulk_expression_profiles)  # 1000 x 200
+#' range(spots$cells_per_sample)        # within cells_per_spot_range
+#' table(rowSums(spots$ground_truth_proportions > 0))
 #' 
 #'
 #' @importFrom MCMCpack rdirichlet
 #' @importFrom Matrix sparseMatrix Diagonal Matrix rowMeans
-#' @importFrom stats runif
+#' @importFrom stats runif median
 #' @importFrom utils head flush.console
 #' @export
 
 quasar_sim_bulk <- function(...,
                             n_bulk_samples = NULL,
                             cells_per_bulk = 500,
+                            mode = c("bulk", "spatial"),
+                            cells_per_spot_range = c(5L, 11L),
+                            celltypes_per_spot_range = c(1L, 5L),
+                            spatial_background = 1e-6,
                             cell_type_column = "cell_type",
                             patient_id_column = NULL,
                             select_ct = NULL,
@@ -144,6 +197,33 @@ quasar_sim_bulk <- function(...,
 
   start_time_all <- Sys.time()
   args <- list(...)
+
+  mode <- match.arg(mode)
+  spatial_mode <- identical(mode, "spatial")
+
+  if (spatial_mode) {
+    cells_per_spot_range <- as.integer(cells_per_spot_range)
+    celltypes_per_spot_range <- as.integer(celltypes_per_spot_range)
+
+    if (length(cells_per_spot_range) != 2L ||
+        anyNA(cells_per_spot_range) ||
+        cells_per_spot_range[1] < 1L ||
+        cells_per_spot_range[2] < cells_per_spot_range[1]) {
+      stop("`cells_per_spot_range` must be two increasing positive integers")
+    }
+
+    if (length(celltypes_per_spot_range) != 2L ||
+        anyNA(celltypes_per_spot_range) ||
+        celltypes_per_spot_range[1] < 1L ||
+        celltypes_per_spot_range[2] < celltypes_per_spot_range[1]) {
+      stop("`celltypes_per_spot_range` must be two increasing positive integers")
+    }
+
+    if (!is.numeric(spatial_background) || length(spatial_background) != 1L ||
+        is.na(spatial_background) || spatial_background <= 0) {
+      stop("`spatial_background` must be a single positive number")
+    }
+  }
 
   # --------------------------------------------------
   # Yellow multi-line progress bar 
@@ -184,7 +264,9 @@ quasar_sim_bulk <- function(...,
 
   if (verbose) {
     cat("\033[33m", "-------------------------------", "\033[0m", "\n", sep = "")
-    cat("\033[33m", "\033[1m", "Generating pseudo-bulks", "\033[0m", "\n", sep = "")
+    cat("\033[33m", "\033[1m",
+        if (spatial_mode) "Generating spatial spots" else "Generating pseudo-bulks",
+        "\033[0m", "\n", sep = "")
     cat("\033[33m", "-------------------------------", "\033[0m", "\n", sep = "")
   }
 
@@ -235,9 +317,7 @@ quasar_sim_bulk <- function(...,
     celltype_levels <- unique(cell_types)
   }
 
-  # --------------------------------------------------
-  # Patient mode
-  # --------------------------------------------------
+
   patient_mode <- !is.null(patient_id_column)
   if (patient_mode) {
     if (!patient_id_column %in% colnames(cell_metadata))
@@ -248,9 +328,7 @@ quasar_sim_bulk <- function(...,
 
   set.seed(seet)
 
-  # --------------------------------------------------
-  # Precompute indices per cell type
-  # --------------------------------------------------
+
   celltype_indices <- lapply(celltype_levels, function(ct) which(cell_types == ct))
   names(celltype_indices) <- celltype_levels
 
@@ -274,61 +352,100 @@ quasar_sim_bulk <- function(...,
     chosen_patients <- sample(patient_levels, n_bulk_samples, replace = TRUE)
   }
 
-  # --------------------------------------------------
-  # Dirichlet fractions (CT x bulk)
-  # --------------------------------------------------
-  frac_matrix <- t(
-    MCMCpack::rdirichlet(
+  n_celltypes <- length(celltype_levels)
+
+  if (spatial_mode) {
+
+
+    max_ct_per_spot <- min(celltypes_per_spot_range[2], n_celltypes)
+    min_ct_per_spot <- min(celltypes_per_spot_range[1], max_ct_per_spot)
+
+    n_kept <- sample(
+      seq.int(min_ct_per_spot, max_ct_per_spot),
       n_bulk_samples,
-      rep(dirich_alpha, length(celltype_levels))
+      replace = TRUE
     )
-  )
 
-  # --------------------------------------------------
-  # Sparsity / rare masking
-  # --------------------------------------------------
-  if (sparse) {
-    drop_mask <- matrix(
-      runif(length(frac_matrix)) < sparse_prob,
-      nrow = nrow(frac_matrix)
+    frac_matrix <- matrix(0, nrow = n_celltypes, ncol = n_bulk_samples)
+
+    for (i in seq_len(n_bulk_samples)) {
+      alpha_i <- rep(spatial_background, n_celltypes)
+      kept <- sample(seq_len(n_celltypes), n_kept[i], replace = FALSE)
+      alpha_i[kept] <- dirich_alpha
+
+      frac_matrix[, i] <- MCMCpack::rdirichlet(1, alpha_i)[1, ]
+    }
+
+
+    cells_per_sample_vec <- sample(
+      seq.int(cells_per_spot_range[1], cells_per_spot_range[2]),
+      n_bulk_samples,
+      replace = TRUE
     )
-    frac_matrix[drop_mask] <- 0
+
+    counts_per_ct_all <- round(
+      sweep(frac_matrix, 2, cells_per_sample_vec, "*")
+    )
+
+  } else {
+
+
+    frac_matrix <- t(
+      MCMCpack::rdirichlet(
+        n_bulk_samples,
+        rep(dirich_alpha, n_celltypes)
+      )
+    )
+
+
+    if (sparse) {
+      drop_mask <- matrix(
+        runif(length(frac_matrix)) < sparse_prob,
+        nrow = nrow(frac_matrix)
+      )
+      frac_matrix[drop_mask] <- 0
+    }
+
+    if (rare) {
+      rare_mask <- matrix(
+        runif(length(frac_matrix)) < rare_percentage,
+        nrow = nrow(frac_matrix)
+      )
+      frac_matrix[rare_mask] <- runif(sum(rare_mask), 0, 0.03)
+    }
+
+
+    col_sums <- colSums(frac_matrix)
+    valid <- col_sums > 0
+    frac_matrix[, valid] <-
+      sweep(frac_matrix[, valid, drop = FALSE], 2, col_sums[valid], "/")
+
+
+    counts_per_ct_all <- floor(frac_matrix * cells_per_bulk)
+
+    cells_per_sample_vec <- rep.int(cells_per_bulk, n_bulk_samples)
   }
 
-  if (rare) {
-    rare_mask <- matrix(
-      runif(length(frac_matrix)) < rare_percentage,
-      nrow = nrow(frac_matrix)
-    )
-    frac_matrix[rare_mask] <- runif(sum(rare_mask), 0, 0.03)
-  }
 
-
-  col_sums <- colSums(frac_matrix)
-  valid <- col_sums > 0
-  frac_matrix[, valid] <-
-    sweep(frac_matrix[, valid, drop = FALSE], 2, col_sums[valid], "/")
-
-  # --------------------------------------------------
-  # Allocate cells per CT per bulk
-  # --------------------------------------------------
-  counts_per_ct_all <- floor(frac_matrix * cells_per_bulk)
-
-  # Enforce >=1 cell per bulk
   empty_bulks <- which(colSums(counts_per_ct_all) == 0)
   if (length(empty_bulks)) {
     for (i in empty_bulks) {
-      k <- sample(seq_len(nrow(counts_per_ct_all)), 1)
+      if (spatial_mode && any(frac_matrix[, i] > 0)) {
+        k <- sample(seq_len(n_celltypes), 1, prob = frac_matrix[, i])
+      } else {
+        k <- sample(seq_len(nrow(counts_per_ct_all)), 1)
+      }
       counts_per_ct_all[k, i] <- 1
     }
   }
 
+  # Realized pool size per sample after rounding and the rescue above.
+  cells_per_sample_vec <- colSums(counts_per_ct_all)
+
 
   start_time_pseudobulk <- Sys.time()
 
-  # --------------------------------------------------
-  # FAST sampling with preallocation
-  # --------------------------------------------------
+
   K <- length(celltype_levels)
   C <- ncol(count_matrix)
   N <- n_bulk_samples
@@ -346,25 +463,23 @@ quasar_sim_bulk <- function(...,
   grp_ct <- lapply(total_picks_ct, function(n) integer(n))
   pos_ct <- rep.int(1L, K)
 
-  # Contiguous ranges in ids_all/grp_all per bulk sample
-  # (ids are filled in increasing i-order, so each sample owns a contiguous block)
+
   samp_sizes <- colSums(counts_per_ct_all)
   ends   <- cumsum(samp_sizes)
   starts <- c(1, utils::head(ends, -1L) + 1)
 
-  # Dense output, filled chunk-by-chunk *inside* the loop so the heavy
-  # matmul/densification is tracked by the progress bar (not done in one
-  # opaque blocking call at the end).
+
   bulk_expression <- matrix(0, nrow = G, ncol = N)
 
-  # ~100 refreshes; each chunk does sampling + its sparse matmul block
+
   pb_chunk <- max(1L, floor(N / 100))
   chunk_start <- 1L
 
   if (verbose) {
     .quasar_progress(0L, N, start_time_pseudobulk,
-                     header = "Creating pseudo-bulks",
-                     count_label = "Samples", first = TRUE)
+                     header = if (spatial_mode) "Creating spatial spots" else "Creating pseudo-bulks",
+                     count_label = if (spatial_mode) "Spots" else "Samples",
+                     first = TRUE)
   }
 
   for (i in seq_len(N)) {
@@ -385,7 +500,7 @@ quasar_sim_bulk <- function(...,
         next
       }
 
-      # Select pool (patient-specific if available, else fallback to full CT pool)
+
       pool <- NULL
       if (patient_mode) {
         tmp <- pools_by_pat[[ct]][[pat_i]]
@@ -403,13 +518,13 @@ quasar_sim_bulk <- function(...,
       picks <- sample(pool, nct, replace = TRUE)
       picks_ct_list[[k]] <- picks
 
-      # Fill global selection
+ 
       rng_all <- pos_all:(pos_all + nct - 1L)
       ids_all[rng_all] <- picks
       grp_all[rng_all] <- i
       pos_all <- pos_all + nct
 
-      # Fill per-CT selection
+
       p0 <- pos_ct[k]
       rng_ct <- p0:(p0 + nct - 1L)
       ids_ct[[k]][rng_ct] <- picks
@@ -437,32 +552,34 @@ quasar_sim_bulk <- function(...,
 
       if (verbose) {
         .quasar_progress(i, N, start_time_pseudobulk,
-                         header = "Creating pseudo-bulks",
-                         count_label = "Samples")
+                         header = if (spatial_mode) "Creating spatial spots" else "Creating pseudo-bulks",
+                         count_label = if (spatial_mode) "Spots" else "Samples")
       }
     }
   }
 
-  rownames(bulk_expression) <- rownames(count_matrix)
-  colnames(bulk_expression) <- paste0("sample_", seq_len(N))
+  sample_prefix <- if (spatial_mode) "spot_" else "sample_"
+  sample_ids <- paste0(sample_prefix, seq_len(N))
 
-  # --------------------------------------------------
-  # Ground truth proportions from realized allocations
-  # --------------------------------------------------
+  rownames(bulk_expression) <- rownames(count_matrix)
+  colnames(bulk_expression) <- sample_ids
+
+
   gt_props <- sweep(counts_per_ct_all, 2, colSums(counts_per_ct_all), "/")
   gt_props <- t(gt_props)
   colnames(gt_props) <- celltype_levels
-  rownames(gt_props) <- paste0("sample_", seq_len(N))
+  rownames(gt_props) <- sample_ids
 
-  # ==================================================
-  # TIMING END: pseudobulk creation
-  # ==================================================
+
   end_time_pseudobulk <- Sys.time()
   time_pseudobulk_sec <- as.numeric(difftime(end_time_pseudobulk, start_time_pseudobulk, units = "secs"))
 
+  names(cells_per_sample_vec) <- sample_ids
+
   result <- list(
     bulk_expression_profiles = bulk_expression,
-    ground_truth_proportions = gt_props
+    ground_truth_proportions = gt_props,
+    cells_per_sample = cells_per_sample_vec
   )
 
   if (return_used_samples) {
@@ -471,14 +588,12 @@ quasar_sim_bulk <- function(...,
 
   if (patient_mode && return_patient_metadata) {
     result$bulk_patient_metadata <- data.frame(
-      sample_id = paste0("sample_", seq_len(N)),
+      sample_id = sample_ids,
       patient_id = chosen_patients
     )
   }
 
-  # ==================================================
-  # Signature matrix computation (separately timed)
-  # ==================================================
+
   time_signature_sec <- NA_real_
 
   if (return_signature_matrix) {
@@ -529,9 +644,7 @@ quasar_sim_bulk <- function(...,
       }
     }
 
-    # ---------------------------------------------
-    # global signature (genes x celltypes)
-    # ---------------------------------------------
+
     global_sig <- matrix(0, nrow = nrow(count_matrix), ncol = K,
                          dimnames = list(rownames(count_matrix), celltype_levels))
 
@@ -568,12 +681,26 @@ quasar_sim_bulk <- function(...,
   )
 
   if (verbose) {
+    if (spatial_mode) {
+      cat("\033[33m",
+          sprintf("Generated %d spatial spots (%d-%d cells each, median %d) from %d genes\n",
+                  N, min(cells_per_sample_vec), max(cells_per_sample_vec),
+                  as.integer(stats::median(cells_per_sample_vec)),
+                  nrow(bulk_expression)),
+          "\033[0m", sep = "")
+      cat("\033[33m",
+          sprintf("Median cell types per spot: %d\n",
+                  as.integer(stats::median(colSums(counts_per_ct_all > 0)))),
+          "\033[0m", sep = "")
+    } else {
+      cat("\033[33m",
+          sprintf("Generated %d pseudobulks (%d cells each) from %d genes\n",
+                  N, cells_per_bulk, nrow(bulk_expression)),
+          "\033[0m", sep = "")
+    }
     cat("\033[33m",
-        sprintf("Generated %d pseudobulks (%d cells each) from %d genes\n",
-                N, cells_per_bulk, nrow(bulk_expression)),
-        "\033[0m", sep = "")
-    cat("\033[33m",
-        sprintf("Pseudobulk creation time: %.2f secs\n", time_pseudobulk_sec),
+        sprintf("%s creation time: %.2f secs\n",
+                if (spatial_mode) "Spot" else "Pseudobulk", time_pseudobulk_sec),
         "\033[0m", sep = "")
 
     if (return_signature_matrix) {
