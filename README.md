@@ -1,7 +1,7 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# QUASAR <img src="man/figures/logo.png" align="right" height="120" alt="" />
+# QUASAR <img src="man/figures/logo.png" align="right" height="172" alt="" />
 
 <!-- badges: start -->
 

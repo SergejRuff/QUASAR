@@ -13,7 +13,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-# QUASAR <img src="man/figures/logo.png" align="right" height="120" alt="" />
+# QUASAR <img src="man/figures/logo.png" align="right" height="172" alt="" />
 
 <!-- badges: start -->
 <!-- badges: end -->
