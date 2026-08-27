@@ -1,0 +1,146 @@
+# Simulate TAPE training pseudobulks from single-cell data
+
+Generates simulated bulk RNA-seq mixtures from single-cell reference
+data using Dirichlet-sampled cell-type proportions, optional sparsity,
+and optional rare-cell perturbations.
+
+## Usage
+
+``` r
+tape_simulate(
+  sc_data,
+  d_prior = NULL,
+  n = 500,
+  samplenum = 5000,
+  random_state = NULL,
+  sparse = TRUE,
+  sparse_prob = 0.5,
+  rare = FALSE,
+  rare_percentage = 0.4,
+  celltype_col = "CellType",
+  assay = "RNA",
+  slot = "counts"
+)
+```
+
+## Arguments
+
+- sc_data:
+
+  A \`Seurat\` object, a \`SingleCellExperiment\` object, or a
+  matrix/data.frame with cells in rows and genes in columns.
+
+- d_prior:
+
+  Numeric vector or \`NULL\`. Dirichlet prior for cell-type fractions.
+  If \`NULL\`, a vector of ones is used.
+
+- n:
+
+  Integer scalar. Number of cells per simulated bulk sample.
+
+- samplenum:
+
+  Integer scalar. Number of pseudobulk samples to generate.
+
+- random_state:
+
+  Integer scalar or \`NULL\`. Random seed for reproducible simulation.
+
+- sparse:
+
+  Logical scalar. Whether to generate sparse cell-type mixtures.
+
+- sparse_prob:
+
+  Numeric scalar in \`\[0, 1\]\`. Controls both the proportion of sparse
+  samples and the proportion of cell types set to zero within those
+  samples, matching the provided implementation.
+
+- rare:
+
+  Logical scalar. Whether to perturb selected cell types to very small
+  fractions.
+
+- rare_percentage:
+
+  Numeric scalar in \`\[0, 1\]\`. Fraction of cell types selected for
+  rare-cell perturbation.
+
+- celltype_col:
+
+  Character scalar giving the metadata column with cell-type labels.
+
+- assay:
+
+  Character scalar giving the assay name for \`Seurat\` input.
+
+- slot:
+
+  Character scalar giving the assay slot or assay name to extract.
+
+## Value
+
+A named list with components:
+
+- X:
+
+  A numeric matrix of simulated pseudobulks with samples in rows and
+  genes in columns.
+
+- obs:
+
+  A data frame of simulated cell-type proportions with samples in rows
+  and cell types in columns.
+
+- var:
+
+  A data frame whose row names are the simulated gene names.
+
+## Details
+
+This function generates simulated pseudobulk mixtures for the R/torch
+implementation of TAPE, following the simulation strategy used in the
+original TAPE workflow.
+
+## Examples
+
+``` r
+
+set.seed(1)
+n_genes        <- 1000
+cell_types     <- c("Tcell", "Bcell", "Mono")
+cells_per_type <- 100
+n_cells        <- length(cell_types) * cells_per_type
+
+counts <- matrix(
+  rpois(n_genes * n_cells, lambda = 5),
+  nrow = n_genes, ncol = n_cells
+)
+rownames(counts) <- paste0("gene", seq_len(n_genes))
+colnames(counts) <- paste0("cell", seq_len(n_cells))
+
+meta <- data.frame(
+  cell_type = rep(cell_types, each = cells_per_type),
+  row.names = colnames(counts)
+)
+sc <- SeuratObject::CreateSeuratObject(counts = counts, meta.data = meta)
+#> Warning: Data is of class matrix. Coercing to dgCMatrix.
+
+
+simudata <- tape_simulate(
+  sc_data = sc,
+  samplenum = 50,
+  n = 100,
+  celltype_col = "cell_type"
+)
+#> [00:00:00] Simulation started
+#> [00:00:00] Generating Dirichlet proportions
+#> [00:00:00] Applying sparse perturbation
+#> [00:00:00] Sampling cells and building pseudobulks
+#>   |                                                                              |                                                                      |   0%  |                                                                              |=======================                                               |  33%  |                                                                              |===============================================                       |  67%  |                                                                              |======================================================================| 100%
+#> [00:00:00] Simulation finished
+
+print(names(simudata))
+#> [1] "X"   "obs" "var"
+```

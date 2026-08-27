@@ -1,0 +1,111 @@
+# QUASAR
+
+> **Placeholder.** The QUASAR interface is not yet exported. This page
+> describes the method and the planned interface; it will be replaced
+> with a worked example on release.
+
+## Motivation
+
+Most deconvolution methods return a single number per cell type per
+sample. That number carries no indication of how much to trust it, which
+matters because two very different situations produce identical point
+estimates: a confident prediction from a well-matched reference, and a
+guess from a reference that does not represent the target tissue or
+condition.
+
+QUASAR returns intervals alongside the point estimate, and separates two
+kinds of uncertainty that answer different questions.
+
+## Aleatoric uncertainty
+
+Each predicted composition is represented by a Dirichlet distribution
+rather than a point on the simplex. The mean gives the predicted
+proportions; the dispersion gives a sample-specific measure of
+**aleatoric** uncertainty — the irreducible variability around a
+predicted composition, inherent to the observed sample.
+
+Each network predicts one compositional logit per cell type plus a
+single evidence value. The logits pass through a softmax to give the
+mean composition, the evidence through a softplus to give a non-negative
+concentration. The Dirichlet expectation then corresponds exactly to the
+predicted proportion, while the concentration controls how tightly the
+distribution sits around it.
+
+Parameters are learned from the known pseudo-bulk proportions using the
+negative Dirichlet log-likelihood, with an evidential regulariser that
+penalises high evidence when the predicted mean disagrees with the known
+proportions. The regularisation weight is annealed from zero over an
+initial fraction of training, so the model learns the proportions before
+it is asked to be confident about them.
+
+## Epistemic uncertainty
+
+**Epistemic** uncertainty is the reducible uncertainty in the estimated
+prediction function, and QUASAR captures it in two parts.
+
+Multiple independently initialised networks quantify variability arising
+from stochastic optimisation — a standard deep ensemble. But because
+every member trains on the same targets, an ensemble alone cannot
+express uncertainty in the pseudo-bulk training targets themselves.
+
+QUASAR therefore adds parametric-bootstrap retraining. During the
+initial fit, network and optimizer states are checkpointed before
+training completes. Each member is then applied to the pseudo-bulk
+expression profiles to obtain its Dirichlet distributions, alternative
+proportion vectors are sampled from those distributions, and the
+remaining training is repeated from the checkpoint using the resampled
+targets. Restarting from a late checkpoint rather than from scratch
+isolates the effect of the target variation from the noise of a full
+retrain.
+
+The total epistemic variance combines the bootstrap contribution with
+the ensemble variance of the mean.
+
+## Confidence and prediction intervals
+
+The two components support different intervals, and the distinction is
+not cosmetic:
+
+- **Confidence intervals** use epistemic uncertainty alone. They
+  describe uncertainty in the estimated *mean* proportion — how much the
+  answer would move if you refit the model.
+- **Prediction intervals** additionally propagate the Dirichlet
+  dispersion. They describe the broader range of plausible compositions
+  for an *individual sample*.
+
+Prediction intervals are constructed by first perturbing the ensemble
+mean according to its epistemic uncertainty, then sampling a composition
+from a Dirichlet built around each perturbed mean. Limits come from the
+empirical quantiles of those draws and are restricted to `[0, 1]`.
+
+## Planned interface
+
+``` r
+
+# fit <- quasar(
+#   sc_data      = sc_ref,
+#   bulk         = bulk,
+#   celltype_col = "cell_type",
+#   n_models     = 5,
+#   device       = "auto"
+# )
+#
+# fit$proportions          # ensemble-mean cell-type proportions
+# fit$confidence_interval  # epistemic only
+# fit$prediction_interval  # epistemic + aleatoric
+# fit$uncertainty          # per-sample, per-cell-type variance components
+```
+
+## In the meantime
+
+The four ported deep-learning methods are fully available and documented
+under **Deep learning methods**. They return point estimates only, but
+[`quasar_prop_metrics()`](https://sergejruff.github.io/QUASAR/reference/quasar_prop_metrics.md)
+(see **Utilities**) scores any of them against known ground truth.
+
+## Reference
+
+Ruff, S., Tam, W., Bullerjahn, C., Beineke, A., Altenbuchinger, M., &
+Jung, K. (YEAR). Uncertainty aware deep learning for cell type
+deconvolution with confidence and prediction interval estimation.
+*Journal*, volume(issue), pages.
