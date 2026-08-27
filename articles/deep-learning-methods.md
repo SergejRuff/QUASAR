@@ -65,15 +65,15 @@ prediction sets per method.
 ![Prediction concordance and performance equivalence between R and
 Python implementations. (A-E) Agreement of predicted cell-type
 proportions across ten datasets and ten seeds. (F-H) Accuracy against
-ground truth. (I-K) Paired R-Python differences with 95% confidence
-intervals; dashed lines mark the ±0.01 equivalence
+ground truth. (I-K) Paired R-Python differences with intervals; dashed
+lines mark the ±0.01 equivalence
 margin.](figures/r_python_comparison.png)
 
 Prediction concordance and performance equivalence between R and Python
 implementations. (A-E) Agreement of predicted cell-type proportions
 across ten datasets and ten seeds. (F-H) Accuracy against ground truth.
-(I-K) Paired R-Python differences with 95% confidence intervals; dashed
-lines mark the ±0.01 equivalence margin.
+(I-K) Paired R-Python differences with intervals; dashed lines mark the
+±0.01 equivalence margin.
 
 Correlations between R and Python predictions ranged from 0.959 for
 OmicsTweezer to 0.996 for DISSECT, with mean absolute differences in
