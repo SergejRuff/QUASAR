@@ -69,7 +69,7 @@ model runs across ten COVID-19 pseudo-bulk datasets, with both versions
 receiving identical training and test data — 100 matched prediction sets per
 method.
 
-```{r fidelity-fig, echo = FALSE, eval = TRUE, out.width = "100%", fig.cap = "Prediction concordance and performance equivalence between R and Python implementations. (A-E) Agreement of predicted cell-type proportions across ten datasets and ten seeds. (F-H) Accuracy against ground truth. (I-K) Paired R-Python differences with 95% confidence intervals; dashed lines mark the ±0.01 equivalence margin."}
+```{r fidelity-fig, echo = FALSE, eval = TRUE, out.width = "100%", fig.cap = "Prediction concordance and performance equivalence between R and Python implementations. (A-E) Agreement of predicted cell-type proportions across ten datasets and ten seeds. (F-H) Accuracy against ground truth. (I-K) Paired R-Python differences with intervals; dashed lines mark the ±0.01 equivalence margin."}
 knitr::include_graphics("figures/r_python_comparison.png")
 ```
 
