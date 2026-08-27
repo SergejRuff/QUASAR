@@ -8,12 +8,12 @@ Authors@R:
            comment = c(ORCID = "0009-0000-8264-6347")),
     person("Klaus","Jung",email = "klaus.jung@tiho-hannover.de", role = "ctb",
            comment = c(ORCID = "0000-0001-9955-748X")))
-Maintainer: Ruff Sergej <serijnh@gmail.com>  
+Maintainer: Sergej Ruff <serijnh@gmail.com>  
 Description: QUASAR, a novel deep learning-based cell
     deconvolution method with uncertainty quantification. The package
     also includes implementations of state-of-the-art deconvolution
     methods (scaden,tape,dissect,tweezer) for benchmarking.
-License: GPL (>= 3) + file LICENSE
+License: GPL (>= 3)
 URL: https://sergejruff.github.io/QUASAR/, https://github.com/SergejRuff/QUASAR
 BugReports: https://github.com/SergejRuff/QUASAR/issues
 Encoding: UTF-8
