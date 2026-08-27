@@ -546,11 +546,11 @@ res <- quasar_sim_bulk(
 #> Elapsed       : 00:00
 #> ETA           : 00:00
 #> Generated 50 pseudobulks (100 cells each) from 1000 genes
-#> Pseudobulk creation time: 0.13 secs
+#> Pseudobulk creation time: 0.12 secs
 #> Computed bulk_signature_profiles (list of genes×bulk matrices per cell type)
 #> Signature matrix time: 0.01 secs
 #> Returned global_signature_matrix (genes × celltypes)
-#> Total quasar_sim_bulk time: 0.14 secs
+#> Total quasar_sim_bulk time: 0.13 secs
 #> 
 
 dim(res$bulk_expression_profiles)   # 1000 x 50
@@ -1083,8 +1083,8 @@ spots <- quasar_sim_bulk(
 #> ETA           : 00:00
 #> Generated 200 spatial spots (4-12 cells each, median 8) from 1000 genes
 #> Median cell types per spot: 2
-#> Spot creation time: 0.26 secs
-#> Total quasar_sim_bulk time: 0.26 secs
+#> Spot creation time: 0.22 secs
+#> Total quasar_sim_bulk time: 0.22 secs
 #> 
 
 dim(spots$bulk_expression_profiles)  # 1000 x 200
