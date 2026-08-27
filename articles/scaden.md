@@ -1,0 +1,126 @@
+# Scaden
+
+Scaden trains an ensemble of three multilayer perceptrons of increasing
+width (`m256`, `m512`, `m1024`) on simulated pseudo-bulks and averages
+their predictions. It is the simplest of the four ported methods and a
+reasonable first thing to run on a new dataset.
+
+Chunks below are not evaluated during build. Sample counts and epochs
+are reduced for demonstration; use the function defaults for real
+analyses.
+
+## Data
+
+``` r
+
+library(quasar)
+library(QuasarDeconData)
+
+sc_ref <- load_cov_imm("train")
+pbulk  <- load_cov_pbulk(1)
+
+bulk  <- pbulk$bulk_expression_profiles   # genes x samples
+truth <- pbulk$ground_truth_proportions   # samples x cell types
+```
+
+## Simulate
+
+``` r
+
+scaden_sim <- scaden_sim_pb(
+  sc_data      = sc_ref,
+  celltype_col = "cell_type",
+  n            = 500,      # cells per pseudo-bulk
+  samplenum    = 5000,     # number of pseudo-bulks
+  sparse       = TRUE,
+  seed         = 42
+)
+```
+
+`sparse = TRUE` zeroes a subset of cell types in a subset of samples,
+producing training mixtures in which some populations are absent. This
+matters when the target samples may not contain every cell type in the
+reference.
+
+[`scaden_sim_pb()`](https://sergejruff.github.io/QUASAR/reference/scaden_sim_pb.md)
+can also merge several cell types into a single unknown class via
+`unknown_celltypes`. The merge happens *after* simulation — each
+original type gets its own Dirichlet component and is sampled
+independently, then the proportion columns are summed. This mirrors the
+original Python behaviour and differs from relabelling cells before
+simulation.
+
+## Process
+
+``` r
+
+scaden_proc <- scaden_process(
+  sim_data   = scaden_sim,
+  bulk_data  = bulk,
+  mode       = "scaden",
+  var_cutoff = 0.1
+)
+```
+
+Two preprocessing modes are available:
+
+- `"scaden"` applies an absolute variance cutoff to the bulk matrix
+  only, then intersects with the training genes. Uses `log2(x + 1)` and
+  per-sample min-max scaling.
+- `"tape"` applies a top-quantile cutoff to both matrices independently
+  before intersecting. Uses `log(x + 1)` and either min-max or
+  standardisation via `scaler`.
+
+The log base is immaterial in practice — both scalers are invariant to
+multiplication by a positive constant — but each mode stays literal to
+its source.
+
+## Train
+
+``` r
+
+scaden_fit <- scaden(
+  train_x    = scaden_proc$train_x,
+  train_y    = scaden_proc$train_y,
+  lr         = 1e-4,
+  batch_size = 128,
+  epochs     = 20,
+  seed       = 123
+)
+```
+
+All three architectures train sequentially, each with its own progress
+bar. Per-batch and per-epoch losses are returned for every model.
+
+## Predict
+
+``` r
+
+scaden_pred <- scaden_predict(scaden_fit, scaden_proc$test_x)
+
+head(scaden_pred$average_output)
+```
+
+The individual ensemble members are returned as well
+(`prediction_model256`, `prediction_model512`, `prediction_model1024`),
+which is useful for gauging how much the three architectures disagree —
+wide disagreement on a sample is a signal worth following up.
+
+## Evaluate
+
+``` r
+
+metrics <- quasar_prop_metrics(scaden_pred$average_output, truth)
+
+metrics$cell_type_rmse
+metrics$pearson_celltype_cor
+```
+
+## Reference
+
+Menden, K., Marouf, M., Oller, S., Dalmia, A., Magruder, D. S., Kloiber,
+K., … & Bonn, S. (2020). Deep learning-based cell composition analysis
+from tissue expression profiles. *Science Advances*, 6(30), eaba2619.
+
+If you use this implementation, cite both the QUASAR paper and Menden et
+al.

@@ -1,0 +1,154 @@
+# DISSECT
+
+DISSECT trains an ensemble with semi-supervised consistency
+regularization: at each step it forms mixtures of simulated and real
+samples, and penalises predictions on the mixture that disagree with the
+corresponding mixture of the individual predictions. Because that
+constraint uses the real samples without needing their labels, the model
+sees target-domain data during training.
+
+It estimates cell-type fractions and, optionally, cell-type-specific
+expression.
+
+Chunks below are not evaluated during build. Step counts are reduced for
+demonstration; use the function defaults for real analyses.
+
+## Data
+
+``` r
+
+library(quasar)
+library(QuasarDeconData)
+
+sc_ref <- load_cov_imm("train")
+pbulk  <- load_cov_pbulk(1)
+
+bulk  <- pbulk$bulk_expression_profiles   # genes x samples
+truth <- pbulk$ground_truth_proportions
+```
+
+## Simulate
+
+``` r
+
+dissect_sim <- dissect_simulate(
+  sc_data      = sc_ref,
+  celltype_col = "cell_type",
+  batch_col    = "donor_id",
+  type         = "bulk",
+  n_samples    = 5000,
+  save_expr    = TRUE,
+  seed         = 42
+)
+```
+
+`save_expr = TRUE` stores per-cell-type expression contributions for
+every simulated sample. It increases memory use considerably but is a
+hard requirement for the expression model —
+[`dissect_expr()`](https://sergejruff.github.io/QUASAR/reference/dissect_expr.md)
+errors without it. If you only want proportions, set it to `FALSE`.
+
+`batch_col` performs simulation separately per batch and concatenates
+the results, so batch structure in the reference is preserved rather
+than mixed away.
+
+Setting `type = "st"` produces spot-level profiles instead: only a
+handful of cells per spot, allocated by rounding rather than flooring.
+`downsample` then thins the resulting counts without replacement.
+
+## Process
+
+``` r
+
+dissect_proc <- dissect_process(
+  bulk        = bulk,             # genes x samples
+  sim_data    = dissect_sim,
+  var_cutoff  = 0.1,
+  test_in_mix = 1
+)
+```
+
+`test_in_mix` controls how many real samples enter the online mixing
+step. For microarray data, pass `test_dataset_type = "microarray"` — the
+values are back-transformed out of log space before normalisation.
+
+## Estimate fractions
+
+``` r
+
+dissect_prop_res <- dissect_prop(
+  processed = dissect_proc,
+  n_steps   = 5000,
+  models    = 1:5,                # ensemble size
+  device    = "auto"
+)
+
+head(dissect_prop_res$fractions)
+head(dissect_prop_res$scores)
+```
+
+The consistency term is introduced in stages: the first 2000 steps use
+the supervised loss alone, after which the consistency weight switches
+on. `scores` holds the pre-activation outputs, before the softmax.
+
+## Estimate expression
+
+``` r
+
+dissect_expr_res <- dissect_expr(
+  bulk         = bulk,
+  fractions    = dissect_prop_res$fractions,
+  sim_data     = dissect_sim,
+  n_steps_expr = 5000,
+  device       = "auto"
+)
+
+names(dissect_expr_res$expression_layered)
+dim(dissect_expr_res$expression_layered[[1]])
+```
+
+Expression estimation is a separate stage that takes fractions as input,
+via a conditional variational autoencoder. If you want to evaluate the
+expression model in isolation, supply **ground-truth** proportions here
+instead of estimated ones, so that expression differences are not
+confounded by errors in the fractions.
+
+`expression_layered` is one samples × genes matrix per cell type;
+`expression_combined` is the same content as a long data frame with
+`cell_type` and `sample` columns.
+
+## Wrapper
+
+``` r
+
+dissect_res <- dissect(
+  sc_data      = sc_ref,
+  bulk         = bulk,
+  celltype_col = "cell_type",
+  batch_col    = "donor_id",
+  save_expr    = TRUE,
+  device       = "auto"
+)
+
+head(dissect_res$fractions)
+```
+
+The wrapper runs simulation, processing, fraction estimation, and — when
+`save_expr = TRUE` — expression estimation. If the expression stage
+fails it warns and returns the proportion results rather than aborting.
+
+## Evaluate
+
+``` r
+
+quasar_prop_metrics(dissect_prop_res$fractions, truth)$cell_type_rmse
+```
+
+## Reference
+
+Khatri, R., Machart, P., & Bonn, S. (2024). DISSECT: deep
+semi-supervised consistency regularization for accurate cell type
+fraction and gene expression estimation. *Genome Biology*, 25(1), 112.
+
+If you use this implementation, cite both the QUASAR paper and Khatri et
+al.
