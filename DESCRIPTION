@@ -4,9 +4,9 @@ Title: Cell deconvolution and uncertainty quantififcation via QUASAR
 Version: 0.1.0
 Authors@R: 
     c(
-    person("Ruff", "Sergej", email = "serijnh@gmail.com", role = c("aut", "cre"),
+    person("Sergej","Ruff", email = "serijnh@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "0009-0000-8264-6347")),
-    person("Jung", "Klaus",email = "klaus.jung@tiho-hannover.de", role = "ctb",
+    person("Klaus","Jung",email = "klaus.jung@tiho-hannover.de", role = "ctb",
            comment = c(ORCID = "0000-0001-9955-748X")))
 Maintainer: Ruff Sergej <serijnh@gmail.com>  
 Description: QUASAR, a novel deep learning-based cell
@@ -14,7 +14,7 @@ Description: QUASAR, a novel deep learning-based cell
     also includes implementations of state-of-the-art deconvolution
     methods (scaden,tape,dissect,tweezer) for benchmarking.
 License: GPL (>= 3) + file LICENSE
-URL: https://github.com/SergejRuff/QUASAR
+URL: https://sergejruff.github.io/QUASAR/, https://github.com/SergejRuff/QUASAR
 BugReports: https://github.com/SergejRuff/QUASAR/issues
 Encoding: UTF-8
 LazyData: true
@@ -32,3 +32,10 @@ Imports:
     torch
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 7.3.3
+Suggests: 
+    knitr,
+    rmarkdown,
+    QuasarDeconData
+VignetteBuilder: knitr
+Remotes: 
+    github::SergejRuff/QuasarDeconData

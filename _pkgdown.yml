@@ -1,4 +1,162 @@
-url: ~
+url: https://sergejruff.github.io/QUASAR/
+
 template:
   bootstrap: 5
+  bslib:
+    primary: "#663399"
+    base_font: {google: "Inter"}
+    heading_font: {google: "Inter"}
+    code_font: {google: "JetBrains Mono"}
 
+home:
+  title: Cell-type deconvolution with uncertainty quantification
+  description: >
+    QUASAR estimates cell-type proportions from bulk transcriptomics data with
+    confidence and prediction intervals, and provides native R implementations
+    of Scaden, TAPE, DISSECT, and OmicsTweezer.
+  sidebar:
+    structure: [links, license, community, citation, authors, dev]
+
+navbar:
+  structure:
+    left:  [intro, quasar, methods, data, utilities, reference, articles]
+    right: [search, github]
+  components:
+    intro:
+      text: Get started
+      href: articles/quasar-deconvolution.html
+    quasar:
+      text: QUASAR
+      href: articles/quasar.html
+    methods:
+      text: Deep learning methods
+      menu:
+      - text: Overview
+        href: articles/deep-learning-methods.html
+      - text: -------
+      - text: Scaden
+        href: articles/scaden.html
+      - text: TAPE
+        href: articles/tape.html
+      - text: DISSECT
+        href: articles/dissect.html
+      - text: OmicsTweezer
+        href: articles/omicstweezer.html
+    data:
+      text: Data
+      href: articles/quasar-data.html
+    utilities:
+      text: Utilities
+      href: articles/utilities.html
+    reference:
+      text: Reference
+      href: reference/index.html
+    github:
+      icon: fab fa-github fa-lg
+      href: https://github.com/SergejRuff/QUASAR
+      aria-label: GitHub
+
+reference:
+
+- title: QUASAR
+  desc: >
+    Uncertainty-aware cell-type deconvolution. Returns Dirichlet-based point
+    estimates together with confidence and prediction intervals.
+  contents:
+  - quasar_sim_bulk
+
+- title: Scaden
+  desc: >
+    Native R implementation of Scaden (Menden et al., 2020). A three-model
+    multilayer perceptron ensemble trained on simulated pseudo-bulks.
+  contents:
+  - scaden_sim_pb
+  - scaden_process
+  - scaden
+  - scaden_predict
+
+- title: TAPE
+  desc: >
+    Native R implementation of TAPE (Chen et al., 2022). An autoencoder with a
+    tissue-adaptive refinement stage, in overall or high-resolution mode.
+  contents:
+  - tape_simulate
+  - tape_process
+  - tape_train
+  - tape_predict
+  - tape
+  - tape_clone_model
+
+- title: DISSECT
+  desc: >
+    Native R implementation of DISSECT (Khatri et al., 2024). Semi-supervised
+    consistency regularization for cell-type fractions and cell-type-specific
+    expression.
+  contents:
+  - dissect_simulate
+  - dissect_process
+  - dissect_prop
+  - dissect_expr
+  - dissect
+
+- title: OmicsTweezer
+  desc: >
+    Native R implementation of OmicsTweezer (Yang et al., 2025). Domain
+    adaptation between simulated pseudo-bulks and real bulk samples.
+  contents:
+  - omics_simulate
+  - omics_process
+  - omics_create_model
+  - omics_train
+  - omics_predict
+  - omics_tweezer
+  - omics_set_seed
+
+- title: Evaluation
+  desc: Metrics for comparing estimated proportions against known ground truth.
+  contents:
+  - quasar_prop_metrics
+
+- title: Normalisation
+  desc: Gene filtering and sample-wise normalisation shared across methods.
+  contents:
+  - normalize_bulks
+
+- title: Interoperability
+  desc: Reading and writing AnnData `.h5ad` files.
+  contents:
+  - quasar_h5adimport
+  - quasar_h5adexporter
+  - quasar_h5_read_dataframe
+  - quasar_h5_read_matrix
+
+articles:
+- title: Get started
+  navbar: ~
+  contents:
+  - quasar-deconvolution
+
+- title: QUASAR
+  contents:
+  - quasar
+
+- title: Deep learning methods
+  contents:
+  - deep-learning-methods
+  - scaden
+  - tape
+  - dissect
+  - omicstweezer
+
+- title: Data
+  contents:
+  - quasar-data
+
+- title: Utilities
+  contents:
+  - utilities
+
+footer:
+  structure:
+    left: developed_by
+    right: built_with

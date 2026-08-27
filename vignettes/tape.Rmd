@@ -1,0 +1,160 @@
+---
+title: "TAPE"
+author: "Sergej Ruff"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{TAPE}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+TAPE uses an autoencoder whose latent layer encodes cell-type fractions and
+whose decoder weights collapse into a signature matrix. Its distinguishing
+feature is an adaptive stage that refines the trained model directly on the
+target bulk data, which lets it adjust to a tissue or condition the reference
+does not perfectly match.
+
+Chunks below are not evaluated during build. Epochs are reduced for
+demonstration; use the function defaults for real analyses.
+
+# Data
+
+```{r data}
+library(quasar)
+library(QuasarDeconData)
+
+sc_ref <- load_cov_imm("train")
+pbulk  <- load_cov_pbulk(1)
+
+bulk  <- pbulk$bulk_expression_profiles   # genes x samples
+truth <- pbulk$ground_truth_proportions
+```
+
+# Simulate
+
+```{r simulate}
+tape_sim <- tape_simulate(
+  sc_data      = sc_ref,
+  celltype_col = "cell_type",
+  samplenum    = 5000,
+  n            = 500,
+  sparse       = TRUE,
+  random_state = 42
+)
+```
+
+# Process
+
+```{r process}
+tape_proc <- tape_process(
+  simudata           = tape_sim,
+  real_bulk          = bulk,          # genes x samples
+  variance_threshold = 0.98,
+  scaler             = "mms"
+)
+```
+
+`scaler = "mms"` is per-sample min-max; `"ss"` is per-sample standardisation
+with a population standard deviation, matching sklearn rather than base R's
+`sd()`.
+
+# Train
+
+```{r train}
+tape_model <- tape_train(
+  train_x    = tape_proc$train_x,
+  train_y    = tape_proc$train_y,
+  batch_size = 128,
+  epochs     = 128,
+  seed       = 0
+)
+```
+
+The loss combines an L1 term on the latent proportions against the known
+fractions with an L1 reconstruction term, so the decoder learns a signature
+matrix at the same time as the encoder learns to deconvolve.
+
+# Predict
+
+```{r predict}
+tape_res <- tape_predict(
+  model      = tape_model,
+  test_x     = tape_proc$test_x,
+  genename   = tape_proc$genename,
+  celltypes  = tape_proc$celltypes,
+  samplename = tape_proc$samplename,
+  adaptive   = TRUE,
+  mode       = "overall"
+)
+
+head(tape_res$pred)
+head(tape_res$sigm)
+```
+
+## Adaptive modes
+
+The two modes differ substantially in cost and in what they return.
+
+`"overall"` adapts one model jointly across all target samples and returns a
+single signature matrix — one genes × cell-types profile for the whole dataset.
+
+`"high-resolution"` adapts every sample with its own copy of the model,
+returning a per-sample signature matrix for each cell type. Far more
+informative, and far more expensive. `chunk_size` controls how many samples are
+adapted concurrently as an ensemble of independent models; raise it to use more
+GPU memory and less wall time.
+
+```{r highres}
+tape_hr <- tape_predict(
+  model      = tape_model,
+  test_x     = tape_proc$test_x,
+  genename   = tape_proc$genename,
+  celltypes  = tape_proc$celltypes,
+  samplename = tape_proc$samplename,
+  adaptive   = TRUE,
+  mode       = "high-resolution",
+  chunk_size = 16L
+)
+
+names(tape_hr$sigm)
+dim(tape_hr$sigm[[1]])
+```
+
+Setting `adaptive = FALSE` skips refinement entirely and returns proportions
+only, with `sigm` as `NULL`. This is much faster and worth using when the
+reference already matches the target well.
+
+# Wrapper
+
+```{r wrapper}
+tape_res <- tape(
+  sc_data      = sc_ref,
+  real_bulk    = bulk,
+  celltype_col = "cell_type",
+  samplenum    = 5000,
+  n            = 500,
+  epochs       = 128,
+  adaptive     = TRUE,
+  mode         = "overall"
+)
+```
+
+# Evaluate
+
+```{r evaluate}
+quasar_prop_metrics(tape_res$pred, truth)$cell_type_rmse
+```
+
+# Reference
+
+Chen, Y., Wang, Y., Chen, Y., Cheng, Y., Wei, Y., Li, Y., Wang, J., Wei, Y.,
+Chan, T.-F., & Li, Y. (2022). Deep autoencoder for interpretable
+tissue-adaptive deconvolution and cell-type-specific gene analysis. *Nature
+Communications*, 13(1), 6735.
+
+If you use this implementation, cite both the QUASAR paper and Chen et al.

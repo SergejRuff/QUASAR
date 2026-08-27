@@ -1,0 +1,149 @@
+---
+title: "OmicsTweezer"
+author: "Sergej Ruff"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{OmicsTweezer}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+OmicsTweezer adds a domain-adaptation term to the training objective,
+encouraging the encoder to place simulated pseudo-bulks and real bulk samples
+in a shared embedding space. Each training batch pairs labelled source samples
+with unlabelled target samples, so the alignment is learned without needing
+target labels.
+
+Chunks below are not evaluated during build. Epochs are reduced for
+demonstration; use the function defaults for real analyses.
+
+# Data
+
+```{r data}
+library(quasar)
+library(QuasarDeconData)
+
+sc_ref <- load_cov_imm("train")
+pbulk  <- load_cov_pbulk(1)
+
+bulk  <- pbulk$bulk_expression_profiles   # genes x samples
+truth <- pbulk$ground_truth_proportions
+```
+
+# Simulate
+
+```{r simulate}
+ot_sim <- omics_simulate(
+  sc_data      = sc_ref,
+  celltype_col = "cell_type",
+  samplenum    = 5000,
+  n            = 500,
+  random_state = 42
+)
+```
+
+`sparse = TRUE` and `rare = TRUE` add optional perturbations: the first zeroes
+a subset of cell types in a subset of samples, the second forces selected types
+to very small fractions to emulate rare populations.
+
+# Process
+
+```{r process}
+ot_proc <- omics_process(
+  simudata           = ot_sim,
+  real_bulk          = bulk,      # genes x samples
+  variance_threshold = 0.98,
+  scaler             = "ss"
+)
+```
+
+`scaler` is `"ss"` for per-sample standardisation, `"mms"` for min-max, or
+`"none"`.
+
+# Train
+
+```{r train}
+ot_model <- omics_train(
+  train_x       = ot_proc$train_x,
+  train_y       = ot_proc$train_y,
+  test_x        = ot_proc$test_x,
+  dims          = c(512L, 256L, 128L, 64L),
+  drops         = c(0, 0.3, 0.2, 0.1),
+  epochs        = 30,
+  batch_size    = 128,
+  learning_rate = 1e-4,
+  loss_weight   = 1.0,
+  device        = "auto"
+)
+
+head(ot_model$history)
+```
+
+Note that `test_x` is passed to the *training* function. It supplies the
+unlabelled target-domain batches for the adaptation term; no labels are used.
+
+`loss_weight` controls how strongly the domain-adaptation term contributes
+relative to the supervised MSE. Raising it pushes harder toward alignment at
+the cost of supervised accuracy on the simulated data.
+
+`dims` and `drops` must each be length four, matching the encoder and predictor
+block structure.
+
+# Predict
+
+```{r predict}
+ot_pred <- omics_predict(
+  model      = ot_model,
+  test_x     = ot_proc$test_x,
+  celltypes  = ot_proc$celltypes,
+  samplename = ot_proc$samplename,
+  device     = "auto"
+)
+
+head(ot_pred)
+```
+
+# Wrapper
+
+```{r wrapper}
+ot_res <- omics_tweezer(
+  sc_data      = sc_ref,
+  real_bulk    = bulk,
+  celltype_col = "cell_type",
+  samplenum    = 5000,
+  epochs       = 30,
+  scaler       = "ss",
+  device       = "auto"
+)
+
+head(ot_res$pred)
+names(ot_res$per_model)
+head(ot_res$loss_history)
+```
+
+The wrapper trains three architectures (`m256`, `m512`, `m1024`) and averages
+their predictions. `per_model` keeps the individual predictions and
+`loss_history` the epoch-level losses for all three.
+
+`scale_minmax = TRUE` applies an additional global min-max scaling to the raw
+count matrices before processing, mirroring the original `train_predict(scale =
+TRUE)` path.
+
+# Evaluate
+
+```{r evaluate}
+quasar_prop_metrics(ot_res$pred, truth)$cell_type_rmse
+```
+
+# Reference
+
+Yang, X., Zhao, F., Ren, T., Chen, C., Byrne, K. T., Danilov, A. V., ... &
+Xia, Z. (2025). OmicsTweezer: A distribution-independent cell deconvolution
+model for multi-omics data. *Cell Genomics*, 5(9).
+
+If you use this implementation, cite both the QUASAR paper and Yang et al.

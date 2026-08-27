@@ -1,0 +1,171 @@
+---
+title: "QUASAR data"
+author: "Sergej Ruff"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{QUASAR data}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+Example and benchmark datasets live in a companion package, `QuasarDeconData`,
+so that the main package stays light.
+
+```{r install}
+# install.packages("pak")
+pak::pak("SergejRuff/QuasarDeconData")
+
+library(QuasarDeconData)
+```
+
+Every deconvolution method in this package needs two inputs: an annotated
+single-cell reference and a bulk expression matrix. The datasets below supply
+matched pairs of both.
+
+# COVID-19 PBMC
+
+A labelled scRNA-seq dataset of PBMCs from individuals with SARS-CoV-2
+infection, partitioned at the **donor** level into training and test halves
+with disease severity balanced across both. Donor-level splitting means no cell
+contributes to both the reference and the targets.
+
+```{r cov-sc}
+sc_train <- load_cov_imm("train")
+sc_test  <- load_cov_imm("test")
+
+sc_train
+table(sc_train$cell_type)
+table(sc_train$donor_id)
+```
+
+Cell-type labels are in `cell_type`, donor labels in `donor_id`. `donor_id` is
+retained because some deconvolution methods require per-subject information,
+and because donor-specific pseudo-bulk generation preserves expression
+heterogeneity that pooling would average away.
+
+A third reference contains only non-diseased donors:
+
+```{r cov-healthy}
+sc_healthy <- load_cov_imm("healthy")
+```
+
+This one exists for **reference-mismatch experiments** — deconvolving
+COVID-19 mixtures with a reference built from healthy donors, which is the
+realistic situation when condition-matched single-cell data is unavailable. It
+may lack cell types present in the benchmark ground truth.
+
+## Pseudo-bulk
+
+Ten independently simulated test datasets were generated from the held-out test
+cells, each with 1000 pseudo-bulk samples at 100 cells per sample.
+
+```{r cov-pbulk}
+pbulk <- load_cov_pbulk(1)          # a single test dataset
+
+bulk  <- pbulk$bulk_expression_profiles   # genes x samples
+truth <- pbulk$ground_truth_proportions   # samples x cell types
+
+dim(bulk)
+dim(truth)
+head(truth)
+```
+
+```{r cov-pbulk-all}
+all_pbulk <- load_cov_pbulk()        # all ten as a named list
+train_pb  <- load_cov_pbulk("train")    # from the training split
+healthy_pb <- load_cov_pbulk("healthy") # from the healthy-only split
+```
+
+The training pseudo-bulk contains 10000 samples at 500 cells each, and is what
+every deep-learning method was given as common training data in the benchmark.
+The train and healthy sets are stored as chunks and reassembled on load, so the
+split is invisible to you and sample order is preserved.
+
+# 10x Genomics PBMC
+
+A reference combining the publicly available 6k, 8k, and 10k healthy-donor PBMC
+datasets from 10x Genomics, each a different donor. 22,629 features across
+21,978 cells.
+
+```{r pbmc}
+sc_pbmc <- load_pbmc_sc_ref()
+
+table(sc_pbmc$celltype)
+table(sc_pbmc$donor_id)
+```
+
+Note the cell-type column here is **`celltype`**, not `cell_type` as in the
+COVID-19 data. Combining three donors increases reference size and supplies the
+donor information that methods like MuSiC and MEAD require.
+
+Matching pseudo-bulk:
+
+```{r pbmc-pb}
+pb <- load_pbmc_sc_ref("pseudobulk")
+
+dim(pb$bulk_expression_profiles)
+dim(pb$ground_truth_proportions)
+```
+
+The original 10x datasets are licensed CC BY 4.0. The versions here were
+processed, annotated, filtered, and reformatted for QUASAR workflows; no
+endorsement by 10x Genomics is implied.
+
+# Real bulk benchmarks
+
+Four PBMC datasets with flow-cytometry-derived ground-truth proportions. Use
+these with `load_pbmc_sc_ref()` as the reference.
+
+```{r real}
+data(GSE107011)   # 12 samples,  36,128 features, RNA-seq
+data(GSE107572)   #  9 samples,  19,423 features, RNA-seq
+data(GSE120502)   # 249 samples, 39,376 features, RNA-seq
+data(GSE65133)    # 20 samples,  35,688 features, microarray
+
+names(GSE107011)
+dim(GSE107011$bulk_expression_profiles)
+colnames(GSE107011$ground_truth_proportions)
+```
+
+All four share the same six cell-type columns — `Bcells`, `CD4Tcells`,
+`CD8Tcells`, `Monocytes`, `NK`, `Unknown` — though the column *order* differs
+between datasets. `quasar_prop_metrics()` aligns by name, so order does not
+matter when scoring.
+
+`GSE65133` is microarray rather than RNA-seq. DISSECT handles this explicitly:
+
+```{r microarray}
+dissect_micro <- dissect(
+  sc_data           = sc_pbmc,
+  bulk              = GSE65133$bulk_expression_profiles,
+  celltype_col      = "celltype",
+  test_dataset_type = "microarray",
+  device            = "auto"
+)
+```
+
+Ground-truth proportions for these four follow the benchmark used by Khatri et
+al. (2024); the bulk expression matrices were retrieved independently from GEO.
+
+# Orientation summary
+
+| Object | Layout |
+|---|---|
+| `bulk_expression_profiles` | genes × samples |
+| `ground_truth_proportions` | samples × cell types |
+| Single-cell references | `Seurat`, features × cells |
+
+Most `*_process()` functions expect genes × samples, so the packaged bulk
+matrices can be passed straight through.
+
+# Sources
+
+- COVID-19 Immune Atlas, CELLxGENE collection
+  `b9fc3d70-5a72-4479-a046-c2cc1ab19efc`
+- 10x Genomics 6k / 8k / 10k healthy-donor PBMC datasets (CC BY 4.0)
+- GEO accessions GSE107011, GSE107572, GSE120502, GSE65133
