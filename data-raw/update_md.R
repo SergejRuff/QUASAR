@@ -27,3 +27,12 @@ pkgdown::preview_site()
 usethis::use_github_pages()
 usethis::use_github_action("pkgdown")
 usethis::use_build_ignore("docs")
+
+
+
+dir.create("vignettes/figures", showWarnings = FALSE)
+
+magick::image_read("data-raw/r_python_comparison.tif") |>
+  magick::image_convert(format = "png") |>
+  magick::image_resize("1600x") |>          # cap the width; TIFFs are often huge
+  magick::image_write("vignettes/figures/r_python_comparison.png")
